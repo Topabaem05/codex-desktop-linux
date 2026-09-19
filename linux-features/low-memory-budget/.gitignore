@@ -1,0 +1,4 @@
+native/macos-memory
+native/macos-memory-arm64
+native/macos-memory-x86_64
+*.jsonl

@@ -1,0 +1,12 @@
+{
+  "id": "low-memory-budget",
+  "title": "Cross-platform Memory Budget Toolkit",
+  "description": "Opt-in budget diagnostics, bounded-state primitives and an explicit experimental V8 heap launcher hook; not a RAM guarantee.",
+  "defaultEnabled": false,
+  "resources": [
+    { "source": "runtime/core.js", "target": ".codex-linux/features/low-memory-budget/runtime/core.js", "mode": "0644" },
+    { "source": "runtime/platform.js", "target": ".codex-linux/features/low-memory-budget/runtime/platform.js", "mode": "0644" },
+    { "source": "runtime/cli.js", "target": ".codex-linux/features/low-memory-budget/runtime/cli.js", "mode": "0644" }
+  ],
+  "runtimeHooks": { "launcher": "launcher.sh" }
+}

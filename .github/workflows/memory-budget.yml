@@ -1,0 +1,110 @@
+name: Memory budget CI and CLI
+
+on:
+  push:
+    branches: [main, feat/cross-platform-memory-budget]
+    paths:
+      - 'linux-features/low-memory-budget/**'
+      - '.github/workflows/memory-budget.yml'
+      - 'docs/superpowers/**'
+      - 'LOW_MEMORY*'
+  pull_request:
+    paths:
+      - 'linux-features/low-memory-budget/**'
+      - '.github/workflows/memory-budget.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  portable:
+    name: ${{ matrix.os }} / Node ${{ matrix.node }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-latest]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Build universal macOS observer outside any signed app
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd linux-features/low-memory-budget/native
+          xcrun clang -std=c11 -Wall -Wextra -Werror -O2 -fblocks \
+            -arch arm64 -arch x86_64 macos-memory.c -o macos-memory
+          lipo -info macos-memory
+      - name: Syntax and whitespace checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          for file in linux-features/low-memory-budget/runtime/*.js linux-features/low-memory-budget/test.js; do node --check "$file"; done
+          sh -n linux-features/low-memory-budget/launcher.sh
+          sh -n linux-features/low-memory-budget/native/build-macos.sh
+          git diff --check HEAD^ HEAD
+      - name: Unit and real-process CLI tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports
+          node --test linux-features/low-memory-budget/test.js | tee reports/memory-budget.tap
+      - name: Existing feature-framework regression tests
+        if: runner.os == 'Linux' && matrix.node == 24
+        run: node --test scripts/lib/linux-features.test.js
+      - name: Publish test evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: memory-budget-${{ matrix.os }}-node-${{ matrix.node }}
+          path: reports/
+          if-no-files-found: warn
+          retention-days: 7
+
+  linux-kernel-cap:
+    name: Linux cgroup accounting and OOM semantics
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: 22
+      - name: Exercise isolated 96 MiB cap, not the host or official app
+        shell: bash
+        run: |
+          set -euo pipefail
+          unit="codex-budget-ci-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          script="$RUNNER_TEMP/cgroup-probe.cjs"
+          cat > "$script" <<'JS'
+          const fs = require('node:fs');
+          const assert = require('node:assert/strict');
+          const entry = fs.readFileSync('/proc/self/cgroup', 'utf8').split('\n').find(x => x.startsWith('0::'));
+          assert.ok(entry);
+          const root = '/sys/fs/cgroup' + entry.slice(3);
+          assert.equal(fs.readFileSync(root + '/memory.max', 'utf8').trim(), '100663296');
+          assert.equal(fs.readFileSync(root + '/memory.swap.max', 'utf8').trim(), '0');
+          console.log('HARD_LIMIT_VERIFIED');
+          global.allocation = Buffer.alloc(256 * 1024 * 1024, 1);
+          setTimeout(() => process.exit(99), 2000);
+          JS
+          set +e
+          sudo systemd-run --unit="$unit" --wait --pipe \
+            --property=MemoryHigh=83886080 --property=MemoryMax=100663296 \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=20 \
+            "$(command -v node)" "$script" 2>&1 | tee "$RUNNER_TEMP/cgroup-probe.log"
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -ne 0
+          grep -q HARD_LIMIT_VERIFIED "$RUNNER_TEMP/cgroup-probe.log"
+          result=$(sudo systemctl show "$unit.service" --property=Result --value)
+          test "$result" = oom-kill
+          sudo systemctl reset-failed "$unit.service"
