@@ -92,13 +92,27 @@ jobs:
           const root = '/sys/fs/cgroup' + entry.slice(3);
           assert.equal(fs.readFileSync(root + '/memory.max', 'utf8').trim(), '100663296');
           assert.equal(fs.readFileSync(root + '/memory.swap.max', 'utf8').trim(), '0');
+          const high = fs.readFileSync(root + '/memory.high', 'utf8').trim();
+          if (process.argv[2] === 'limits') {
+            assert.equal(high, '83886080');
+            console.log('HIGH_AND_MAX_VERIFIED');
+            process.exit(0);
+          }
+          assert.equal(high, 'max');
           console.log('HARD_LIMIT_VERIFIED');
           global.allocation = Buffer.alloc(256 * 1024 * 1024, 1);
           setTimeout(() => process.exit(99), 2000);
           JS
+          # Verify the soft/high configuration without forcing an allocation stall.
+          sudo systemd-run --unit="${unit}-limits" --wait --pipe \
+            --property=MemoryHigh=83886080 --property=MemoryMax=100663296 \
+            --property=MemorySwapMax=0 --property=RuntimeMaxSec=20 \
+            "$(command -v node)" "$script" limits
+          # memory.high can throttle indefinitely before memory.max reaches OOM.
+          # Isolate OOM semantics with high=max; keep the real launcher's high unchanged.
           set +e
           sudo systemd-run --unit="$unit" --wait --pipe \
-            --property=MemoryHigh=83886080 --property=MemoryMax=100663296 \
+            --property=MemoryHigh=infinity --property=MemoryMax=100663296 \
             --property=MemorySwapMax=0 --property=RuntimeMaxSec=20 \
             "$(command -v node)" "$script" 2>&1 | tee "$RUNNER_TEMP/cgroup-probe.log"
           status=${PIPESTATUS[0]}
