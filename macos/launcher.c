@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
+#include "native/tuning.h"
 #ifndef COMMUNITY_HEAP_MIB
 #define COMMUNITY_HEAP_MIB 512
 #endif
@@ -14,11 +15,13 @@
 #define UPSTREAM_EXECUTABLE "ChatGPT"
 #endif
 int main(int argc, char **argv) {
+    int ablation = community_ablation(getenv("CODEX_COMMUNITY_ABLATION"));
+    if (ablation < 0) { fputs("Unknown community ablation\n", stderr); return 2; }
     int safe = getenv("CODEX_COMMUNITY_SAFE_MODE") && !strcmp(getenv("CODEX_COMMUNITY_SAFE_MODE"), "1");
     for (int i=1; i<argc; i++) {
         if (!strcmp(argv[i], "--community-safe-mode")) safe = 1;
         if (!strcmp(argv[i], "--community-launch-plan")) {
-            printf("{\"heapMiB\":%d,\"kernelHardLimit\":false,\"profile\":\"all-compatible\"}\n", COMMUNITY_HEAP_MIB);
+            printf("{\"heapMiB\":%d,\"kernelHardLimit\":false,\"profile\":\"all-compatible\"}\n", (ablation == 1 || safe) ? 0 : COMMUNITY_HEAP_MIB);
             return 0;
         }
         if (!strncmp(argv[i], "--js-flags", 10)) {
@@ -36,7 +39,7 @@ int main(int argc, char **argv) {
     char **args = calloc((size_t)argc + 3, sizeof(char *));
     if (!args) return 2;
     int n=0; args[n++]=target;
-    if (!safe) { snprintf(flag,sizeof(flag),"--js-flags=--max-old-space-size=%d",COMMUNITY_HEAP_MIB); args[n++]=flag; }
+    if (!safe && ablation != 1) { snprintf(flag,sizeof(flag),"--js-flags=--max-old-space-size=%d",COMMUNITY_HEAP_MIB); args[n++]=flag; }
     if (safe && setenv("CODEX_COMMUNITY_SAFE_MODE","1",1)) { free(args); return 2; }
     for(int i=1;i<argc;i++) if(strcmp(argv[i],"--community-safe-mode")) args[n++]=argv[i];
     args[n]=NULL;

@@ -3,21 +3,28 @@ import hashlib
 SWITCH = 'globalThis.__codexCommunityLowMemory===true'
 
 def _backend():
-    call = 'e=await require(require(`node:path`).join(process.resourcesPath,`community/session-policy.cjs`)).prepareEphemeral(this,e),t?.();'
+    call = 'e=await require(require(`node:path`).join(process.resourcesPath,`community/guardian-policy.cjs`)).prepareThread(this,e),t?.();'
     return [(f'async {method}(e,t){{await this.ensureReady(),t?.();',
              f'async {method}(e,t){{await this.ensureReady(),t?.();if({SWITCH}){{{call}}}')
-            for method in ('startThread', 'forkThread')]
+            for method in ('startThread', 'forkThread')] + [(
+        'async resumeThread(e,t){await this.ensureReady();',
+        'async resumeThread(e,t){await this.ensureReady();if('+SWITCH+'){t=await require(require(`node:path`).join(process.resourcesPath,`community/guardian-policy.cjs`)).prepareThread(this,t??{});}')]
 
 def _sessions(retention, constructor):
     retention_after = retention.replace('108e5', f'({SWITCH}?60e3:108e5)').replace('=10', f'=({SWITCH}?2:10)')
     queue = f'getTextDeltaQueue(){{return this.frameTextDeltaQueue??=new {constructor}('
     guard = 'if(t?.resumeState!==`resumed`||!this.params.streamState.ownsConversationHistoryStream(e))'
+    first = 'enqueue(e){let t=this.buildKey(e),n=this.buffers.get(t)?.delta??``;'
+    first_after = first[:-1] + f',r={SWITCH}&&e.delta.length>0&&!this.communityFirstKeys.has(t);if(r){{this.communityFirstKeys.add(t);if(this.communityFirstKeys.size>256)this.communityFirstKeys.delete(this.communityFirstKeys.values().next().value);}}'
     return [
+        ('options;buffers=new Map;cancelScheduledFlush=null;stopWatchingVisibility=null;drainCallbacks=[];',
+         f'options;buffers=new Map;communityFirstKeys={SWITCH}?new Set:null;cancelScheduledFlush=null;stopWatchingVisibility=null;drainCallbacks=[];'),
+        (first, first_after),
         (retention, retention_after),
         (queue + '{scheduler:this.scheduler,onFlush:',
          queue + f'{{scheduler:{SWITCH}?{{schedule:(e,t)=>this.scheduler.schedule(e,t)}}:this.scheduler,fallbackIntervalMs:{SWITCH}?75:void 0,onFlush:'),
         ('delta:`${n}${e.delta}`}),this.scheduleFlush()}flushNow()',
-         'delta:`${n}${e.delta}`}),' + SWITCH + '&&this.getBufferedDeltaLength()>=65536?this.flushNow():this.scheduleFlush()}flushNow()'),
+         'delta:`${n}${e.delta}`}),' + SWITCH + '&&(r||this.getBufferedDeltaLength()>=65536)?this.flushNow():this.scheduleFlush()}flushNow()'),
         ('flushIntervalMs:50,onFlush:e=>this.applyOutputDeltas(e)',
          f'flushIntervalMs:{SWITCH}?100:50,onFlush:e=>this.applyOutputDeltas(e)'),
         (guard + '{', guard[:-1] + f'||({SWITCH}&&(this.hasActiveConversationView(e)||this.hasOwnedStreamFollowers(e)||this.shouldKeepConversationLoaded(t)))){{')]
@@ -34,7 +41,7 @@ SPECS = {
         'edits': _sessions('NUt=108e5,PUt=15e3,FUt=10', 'rWt')},
     'webview/assets/shiki-highlight-provider-adb14c364832.js': {
         'sha256': 'f0ec8b16b76d3e9905a713aa9723b0aec36d131febb7f302d31fd45985987bf9',
-        'edits': [('A=4,j=100,M=[', f'A={SWITCH}?2:4,j={SWITCH}?32:100,M=[')]},
+        'edits': [('A=4,j=100,M=[', f'A=({SWITCH}&&globalThis.__codexCommunityHighlightBudget!==false)?2:4,j={SWITCH}?32:100,M=[')]},
     'webview/assets/virtualized-turn-list-8a3aa93570e5.js': {
         'sha256': 'd00f4d221c9576382898c64e7e9c62f32fcb0fe81e4cd997f79ed2aeb36341d3',
         'edits': [('Ue=12,We=800,Ge=2,Ke=10', f'Ue=12,We=800,Ge={SWITCH}?1:2,Ke=10')]}}

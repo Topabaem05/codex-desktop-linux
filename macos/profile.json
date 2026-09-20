@@ -16,12 +16,13 @@
     "metadataMcpIsolation": true,
     "inactiveHistoryBudget": true,
     "streamBatching": true,
-    "highlightWorkerBudget": true
+    "highlightWorkerBudget": true,
+    "stdioMcpGuardian": true
   },
   "notPorted": {
     "cgroupHardCap": "Linux kernel facility; no macOS per-conversation equivalent",
     "watchboundInotify": "Linux native dependency; upstream macOS watcher retained",
-    "linuxHelperReapers": "Linux process identity checks cannot safely be reused on macOS",
+    "linuxHelperReapers": "Only explicitly wrapped local stdio MCP process groups have a native guardian; escaped groups and other tools are not reaped",
     "mcpPoolingAndToolAdmission": "Global tool scheduling inside the Rust engine and stateful MCP pooling are not intercepted",
     "immediateThreadUnload": "Bundled protocol has no non-destructive immediate unload endpoint; retain supported unsubscribe"
   },

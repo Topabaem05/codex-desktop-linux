@@ -15,14 +15,23 @@ for(const enabled of [true,false]){
  manager.applyFrameTextDeltas=items=>{for(const item of items)received+=item.delta;};
  const instance=manager.getTextDeltaQueue();
  instance.enqueue({conversationId:'x',turnId:'turn',itemId:'message',target:{type:'agentMessage'},delta:'한글 abc'});
- assert.equal(received,'');assert.equal(pending.at(-1).ms,enabled?75:16);
+ assert.equal(received,enabled?'한글 abc':'');
+ if(!enabled)assert.equal(pending.at(-1).ms,16);
+ instance.enqueue({conversationId:'x',turnId:'turn',itemId:'message',target:{type:'agentMessage'},delta:' 다음'});
+ assert.equal(pending.at(-1).ms,enabled?75:16);
+
  // Completion barriers must finish all text before the caller processes completion.
- if(enabled){assert.equal(instance.drainBefore(()=>{throw Error('unneeded delay');}),false);assert.equal(received,'한글 abc');}
+ if(enabled){assert.equal(instance.drainBefore(()=>{throw Error('unneeded delay');}),false);assert.equal(received,'한글 abc 다음');}
  else instance.flushNow();
  const large='x'.repeat(70000);
  instance.enqueue({conversationId:'x',turnId:'turn',itemId:'message',target:{type:'agentMessage'},delta:large});
  if(enabled)assert.equal(instance.getBufferedDeltaLength(),0);
- instance.flushNow();assert.equal(received,'한글 abc'+large);
+ instance.flushNow();assert.equal(received,'한글 abc 다음'+large);
+ if(enabled){
+  for(let i=0;i<800;i++)instance.enqueue({conversationId:'c'+i,turnId:'t',itemId:'i',target:{type:'agentMessage'},delta:'가'});
+  assert.ok(instance.communityFirstKeys.size<=256,'First-key history is unbounded');
+  assert.equal(instance.getBufferedDeltaLength(),0);
+ }
  // The real inactivity manager must keep active turns, approvals and followers.
  const ret=s.match(/_b=([^;]+?),Z_e=15e3,vb=(.+?),Q_e=class/);assert.ok(ret);
  const values=vm.runInContext(`[${ret[1]},${ret[2]}]`,ctx);

@@ -52,7 +52,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Codex-Community-macOS-arm64-opt2-dev
+          name: Codex-Community-macOS-arm64-opt3-dev
           path: |
             macos/dist/*.dmg
             macos/dist/SHA256SUMS
@@ -63,7 +63,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: macOS-optimization-v2-evidence
+          name: macOS-optimization-v3-evidence
           path: |
             macos/dist/*.json
             macos/dist/*.log

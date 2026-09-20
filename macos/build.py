@@ -103,7 +103,7 @@ def build(options):
     if profile['name']!='all-compatible' or not all(v is True for v in profile['features'].values()):
         raise ValueError('Release profile must enable every implemented compatible feature')
     out=Path(options.output).resolve();out.mkdir(parents=True,exist_ok=True)
-    dmg_name=f"Codex-Community-{pin['version']}-arm64-opt2-dev.dmg";final=out/dmg_name
+    dmg_name=f"Codex-Community-{pin['version']}-arm64-opt3-dev.dmg";final=out/dmg_name
     if final.exists():raise FileExistsError(f'Refusing to overwrite existing artifact: {final}')
     with tempfile.TemporaryDirectory(prefix='codex-community-build-') as tmp:
         temp=Path(tmp);mount=temp/'mount';mount.mkdir();stage=temp/'image';stage.mkdir()
@@ -143,8 +143,9 @@ def build(options):
         for p in (ROOT/'linux-features/low-memory-budget/runtime').glob('*.js'):shutil.copy2(p,budget/'runtime'/p.name)
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-fblocks','-arch','arm64','-mmacosx-version-min=13.0',ROOT/'linux-features/low-memory-budget/native/macos-memory.c','-o',budget/'native/macos-memory'])
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-arch','arm64','-mmacosx-version-min=13.0',f'-DCOMMUNITY_HEAP_MIB={int(profile["heapMiB"])}',f'-DUPSTREAM_EXECUTABLE="{original_exe}"',HERE/'launcher.c','-o',app/'Contents/MacOS/CodexCommunity'])
+        run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-arch','arm64','-mmacosx-version-min=13.0',HERE/'native/mcp-guardian.c','-o',community/'mcp-guardian'])
         (app/'Contents/Info.plist').write_bytes(plistlib.dumps(community_plist(old,digest)))
-        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'optimizationRevision':2,'patches':optimization_report,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no original app groups, keychain groups or APNs production access','hardLimitEnforced':False}
+        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'optimizationRevision':3,'patches':optimization_report,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no original app groups, keychain groups or APNs production access','hardLimitEnforced':False}
         (community/'build-info.json').write_text(json.dumps(provenance,indent=2)+'\n')
         # Verify actual transformed JS syntax and state/stream behavior in Node before signing.
         node=shutil.which('node')
@@ -158,10 +159,14 @@ def build(options):
         with (out/'backend-conformance.json').open('w') as evidence:
             run([node,HERE/'tests/backend-conformance.cjs',app/'Contents/Resources/codex'],stdout=evidence)
 
+        with (out/'guardian-backend.json').open('w') as evidence:
+            run([node,HERE/'tests/guardian-backend.cjs',app/'Contents/Resources/codex',community/'mcp-guardian',budget/'native/macos-memory'],stdout=evidence)
+
         plan=run([app/'Contents/MacOS/CodexCommunity','--community-launch-plan'],capture_output=True,text=True)
         if json.loads(plan.stdout)['heapMiB']!=profile['heapMiB']:raise ValueError('Launcher profile mismatch')
         run([sys.executable,HERE/'smoke.py',app,out/'smoke.json',out/'smoke.log'])
         run([sys.executable,HERE/'smoke.py',app,out/'safe-smoke.json',out/'safe-smoke.log','safe'])
+        run([sys.executable,HERE/'tests/startup-ablation.py',app,out/'startup-ablation.json'])
         shutil.copy2(HERE/'INSTALL.txt',stage/'INSTALL.txt');(stage/'Applications').symlink_to('/Applications',target_is_directory=True)
         candidate=temp/dmg_name;run(['hdiutil','create','-volname','Codex Community','-srcfolder',stage,'-format','UDZO',candidate])
         run(['hdiutil','verify',candidate]);run(['hdiutil','attach',candidate,'-readonly','-nobrowse','-mountpoint',mount])

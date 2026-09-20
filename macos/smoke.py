@@ -20,6 +20,7 @@ def smoke(app, report_path, log_path, mode="normal"):
         root=Path(tmp);state=root/'telemetry'
         env=dict(os.environ,CODEX_COMMUNITY_STATE_DIR=str(state),CODEX_HOME=str(root/'codex'))
         env.pop('CODEX_COMMUNITY_SAFE_MODE',None)
+        env.pop('CODEX_COMMUNITY_ABLATION',None)
         command=[str(app/'Contents/MacOS/CodexCommunity'),'--user-data-dir='+str(root/'profile')]
         safe=mode=='safe'
         if safe:command.append('--community-safe-mode')
@@ -41,7 +42,7 @@ def smoke(app, report_path, log_path, mode="normal"):
                         if not safe and value.get('ready') and value.get('samples',0)>=2 and value.get('uiApplied',0)>0 and value.get('preloadReady',0)>0:
                             if not isinstance(value.get('bytes'),int) or value['bytes']<=0:raise RuntimeError('Footprint telemetry missing')
                             if value['heapLimitBytes']>650*1024*1024:raise RuntimeError('Configured heap limit not applied')
-                            if value.get('version')!=2 or value.get('observerMode')!='persistent-native':raise RuntimeError('Old optimization runtime')
+                            if value.get('version')!=3 or value.get('observerMode')!='persistent-native':raise RuntimeError('Old optimization runtime')
                             if value.get('groups',{}).get('observer',{}).get('count')!=1:raise RuntimeError('Observer duplicated or missing')
                             if value['hardLimitEnforced'] or value['safeMode']:raise RuntimeError('Unexpected active profile')
                             final['passed']=True;break

@@ -11,12 +11,14 @@ function install() {
   const { app, session, webContents, BrowserWindow, ipcMain } = require('electron');
   const profile = validateProfile(require('./profile.json'));
   const safeMode = process.env.CODEX_COMMUNITY_SAFE_MODE === '1';
+  const ablation = process.env.CODEX_COMMUNITY_ABLATION || 'none';
   const stateDir = process.env.CODEX_COMMUNITY_STATE_DIR || path.join(os.homedir(), 'Library', 'Application Support', 'Codex Community', 'memory');
   globalThis.__codexCommunityLowMemory = !safeMode;
+  globalThis.__codexCommunityMcpGuard = !safeMode && profile.features.stdioMcpGuardian === true;
   const writer=new SnapshotWriter(stateDir);
   const sessionPolicy=require('./session-policy.cjs');
   const report = {
-    version: 2, observerMode: safeMode?'disabled':'persistent-native', groups: {}, profile: profile.name, pid: process.pid, safeMode,
+    version: 3, ablation, observerMode: (safeMode||ablation==='no-observer')?'disabled':'persistent-native', groups: {}, profile: profile.name, pid: process.pid, safeMode,
     heapLimitBytes: v8.getHeapStatistics().heap_size_limit,
     requestedFeatures: profile.features, notPorted: profile.notPorted,
     hardLimitEnforced: false, ready: false, samples: 0, uiApplied: 0,
@@ -26,6 +28,7 @@ function install() {
   function write() {
     report.updatedAt=new Date().toISOString();
     report.metadataSessions=sessionPolicy.stats();
+    report.mcpGuardian=require('./guardian-policy.cjs').stats();
     writer.write(report);
   }
   write();
@@ -43,6 +46,7 @@ function install() {
       if (typeof ses.registerPreloadScript !== 'function') {
         report.lastError = 'preload-api-unavailable'; write(); return;
       }
+      if(!safeMode&&ablation==='upstream-highlight')ses.registerPreloadScript({type:'frame',filePath:path.join(__dirname,'preload-highlight-ablation.cjs')});
       ses.registerPreloadScript({ type: 'frame', filePath: path.join(__dirname, safeMode?'preload-safe.cjs':'preload.cjs') });
     }
   }
@@ -114,7 +118,7 @@ function install() {
     register(session.defaultSession);
     for (const wc of webContents.getAllWebContents()) track(wc);
     report.ready = true; write();
-    if(!safeMode)stopObserver=observe({onSample:sample,onPressure:p=>{systemPressure=p;},
+    if(!safeMode&&ablation!=='no-observer')stopObserver=observe({onSample:sample,onPressure:p=>{systemPressure=p;},
       onError:()=>{report.bytes=null;report.groups={};report.state='unknown';report.lastError='observer-unavailable';write();}});
   }).catch(() => { report.lastError = 'app-not-ready'; write(); });
   app.once('will-quit', () => { closed = true; stopObserver(); writer.close().catch(()=>{}); });
