@@ -5,13 +5,14 @@ const fs=require('node:fs/promises'),path=require('node:path'),v8=require('node:
 const {randomUUID}=require('node:crypto');
 const destination=process.env.CODEX_GUI_AUDIT_DIR;
 if(!destination)throw Error('Diagnostic destination required');
+const failures={preloadErrors:0,loadErrors:0,rendererGone:0};
 const registered=new WeakSet(),responses=new Map();let sequence=Promise.resolve();
 function register(session){
  if(registered.has(session))return;registered.add(session);
  session.registerPreloadScript({type:'frame',filePath:path.join(__dirname,'probe-preload.cjs')});
 }
 app.on('session-created',register);
-app.on('web-contents-created',(_e,wc)=>register(wc.session));
+app.on('web-contents-created',(_e,wc)=>{register(wc.session);wc.on('preload-error',()=>failures.preloadErrors++);wc.on('did-fail-load',()=>failures.loadErrors++);wc.on('render-process-gone',()=>failures.rendererGone++);});
 ipcMain.on('gui-audit:result',(event,value)=>{
  if(event.senderFrame!==event.sender.mainFrame||!value||typeof value.token!=='string')return;
  const pending=responses.get(value.token);
@@ -25,6 +26,21 @@ function inspect(wc,clear){return new Promise(resolve=>{
  responses.set(token,{id:wc.id,timer,resolve});
  try{wc.send('gui-audit:sample',token,clear);}catch{clearTimeout(timer);responses.delete(token);resolve({error:'send-failed'});}
 });}
+async function debugNumbers(wc){
+ // Private in-process CDP, only on disposable diagnostic copies; no listening port.
+ if(wc.debugger.isAttached())return {error:'already-attached'};
+ let attached=false;const out={};
+ try{
+  wc.debugger.attach('1.3');attached=true;
+  for(const [key,method] of [['heapBytes','Runtime.getHeapUsage'],['domCounters','Memory.getDOMCounters']]){
+   let timer;
+   try{out[key]=await Promise.race([wc.debugger.sendCommand(method),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('timeout')),1500);})]);}
+   catch{out[key]=null;}finally{clearTimeout(timer);}
+  }
+ }catch{out.error='debug-unavailable';}
+ finally{if(attached&&wc.debugger.isAttached())wc.debugger.detach();}
+ return out;
+}
 async function snapshot(label,clear=false){
  const started=performance.now();
  const contents=webContents.getAllWebContents().filter(w=>!w.isDestroyed()).slice(0,32);
@@ -32,7 +48,7 @@ async function snapshot(label,clear=false){
   const row={id:wc.id,type:wc.getType(),pid:wc.getOSProcessId(),originClass:bucket(wc.getURL()),loading:wc.isLoading()};
   const win=BrowserWindow.fromWebContents(wc);row.windowVisible=win?win.isVisible():null;
   row.windowMinimized=win?win.isMinimized():null;row.backgroundThrottling=wc.getBackgroundThrottling();
-  row.probe=await inspect(wc,clear);return row;
+  row.probe=await inspect(wc,clear);row.numericDebugger=await debugNumbers(wc);return row;
  }));
  const rtt=[];
  for(const wc of contents.filter(w=>!w.isDestroyed()&&w.getType()==='window')){
@@ -44,7 +60,7 @@ async function snapshot(label,clear=false){
   }
   rtt.push({id:wc.id,count:durations.length,ms:durations});
  }
- const out={label,elapsedMs:performance.now(),durationMs:performance.now()-started,
+ const out={label,elapsedMs:performance.now(),durationMs:performance.now()-started,failures:{...failures},
   main:{pid:process.pid,heapBytes:v8.getHeapStatistics(),memoryBytes:process.memoryUsage()},
   processMetrics:app.getAppMetrics().map(x=>({pid:x.pid,type:x.type,cpu:x.cpu,memoryKiB:x.memory})),contents:rows,ipcEvaluationRtt:rtt};
  await fs.mkdir(destination,{recursive:true,mode:0o700});

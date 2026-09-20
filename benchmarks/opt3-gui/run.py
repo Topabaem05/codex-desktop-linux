@@ -36,6 +36,7 @@ def trial(app,root,mode,helper,window,*,warmup=False,probe=False):
     result['samples'].append(snap)
    log.flush()
   text=logpath.read_text(errors='replace');result.update(markers(text))
+  result['bootErrorCategories']={term:text.count(term) for term in ('Uncaught','ReferenceError','TypeError','SyntaxError','ERR_FAILED','ERR_FILE_NOT_FOUND','preload-error','render-process-gone')}
   status=root/'state/status.json'
   if mode=='opt3' and status.exists():
    st=json.loads(status.read_text());result['opt3Status']={k:st.get(k) for k in ('pid','ready','ablation','safeMode','observerMode','groups','lastError','uiApplied','preloadReady')}
@@ -108,7 +109,7 @@ def main(kind):
   root=Path(temp);apps,pin=prepare(root);result['originalDmgSHA256']=pin['sha256'];helper,window=build_observer(root)
   result['backendVersions']={mode:command([app/'Contents/Resources/codex','--version'],capture_output=True,text=True).stdout.strip() for mode,app in apps.items()}
   if kind=='stock':
-   result['cliBaseline']=cli_baseline(apps['original']/'Contents/Resources/codex',root/'cli',helper);save()
+   result['cliBaseline']=cli_baseline(apps['original']/'Contents/Resources/codex','cli' if False else root/'cli',helper);save()
    schedule=[('original',True),('opt3',True)]+[(mode,False) for mode in ('original','opt3','opt3','original','original','opt3')]
   else:
    from instrument import inject
@@ -122,7 +123,7 @@ def main(kind):
    print(json.dumps({'mode':mode,'warmup':warm,'observed':r['observed'],'routesMs':r.get('routesMountedReportedMs'),
     'endFootprintMiB':r['samples'][-1]['bytes']/1048576 if r['samples'] and r['samples'][-1]['bytes'] is not None else None,'error':r.get('error')}),flush=True)
   result['completed']=all(r['observed'] for r in result['trials'])
-  if kind=='probe':result['completed'] &= all(len(r.get('internalProbes',[]))==5 and all(any(c.get('probe',{}).get('heapKiB') for c in v.get('contents',[])) for v in r.get('internalProbes',[])) for r in result['trials'])
+  if kind=='probe':result['completed'] &= all(len(r.get('internalProbes',[]))==5 and all(any((c.get('probe',{}).get('heapKiB') or c.get('numericDebugger',{}).get('heapBytes')) and c.get('probe',{}).get('resourcesBytes') is not None for c in v.get('contents',[])) for v in r.get('internalProbes',[])) for r in result['trials'])
   save()
  if not result['completed']:raise RuntimeError('Incomplete measurements; do not treat absent values as success')
 if __name__=='__main__':main(sys.argv[1])
