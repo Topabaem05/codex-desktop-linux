@@ -1,0 +1,9 @@
+{
+  "url": "https://persistent.oaistatic.com/codex-app-prod/Codex.dmg",
+  "sha256": "f4bc8e95f921f45c3f1d1891ead21eafdbe8e40612eb34cf0be173988c1996dd",
+  "teamID": "2DC432GLL2",
+  "architecture": "arm64",
+  "version": "26.915.31945",
+  "minimumOS": "13.0",
+  "evidenceRun": 35479402289
+}

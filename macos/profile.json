@@ -1,0 +1,22 @@
+{
+  "name": "all-compatible",
+  "heapMiB": 512,
+  "sampleMs": 5000,
+  "cacheCooldownMs": 60000,
+  "features": {
+    "nativeFootprint": true,
+    "memoryPressurePolicy": true,
+    "backgroundThrottling": true,
+    "reducedMarkdownMotion": true,
+    "offscreenPaintSkipping": true,
+    "idleRendererCacheRelease": true,
+    "boundedDiagnostics": true
+  },
+  "notPorted": {
+    "cgroupHardCap": "Linux kernel facility; no macOS per-conversation equivalent",
+    "watchboundInotify": "Linux native dependency; upstream macOS watcher retained",
+    "linuxHelperReapers": "Linux process identity checks cannot safely be reused on macOS",
+    "mcpPoolingAndToolAdmission": "Requires app-server integration; must not share stateful MCP sessions blindly",
+    "transcriptVirtualization": "Requires React state integration; paint skipping is not DOM virtualization"
+  }
+}

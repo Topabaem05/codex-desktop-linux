@@ -1,0 +1,33 @@
+Codex Community for macOS — experimental development build
+
+Architecture: Apple Silicon (arm64). Minimum macOS: 13, inherited from upstream.
+1. Quit the official Codex/ChatGPT app before starting Community.
+2. Drag Codex Community.app to Applications. Do not replace the official app.
+3. Launch Codex Community. All IMPLEMENTED macOS optimization features are on.
+4. This copy is ad-hoc signed, not Developer-ID-signed or notarized. Gatekeeper
+   may require a per-app Open Anyway approval in Privacy & Security. Verify the
+   provided SHA-256 and source before approving. Do NOT disable Gatekeeper/SIP.
+   Building from source locally is an alternative.
+
+Default: 512 MiB V8 old-space, native footprint/pressure monitoring, background
+renderer throttling, reduced Markdown animations, offscreen paint skipping,
+pressure-triggered unused cache release in hidden idle windows, bounded status.
+No Node/Python/Xcode installation is needed to run this built app.
+
+This is NOT a 1 GiB whole-app/agent cap on macOS and has NOT demonstrated
+500–900 MiB per agent. Linux-only features and unimplemented MCP/tool/React
+integrations are explicitly listed in Contents/Resources/community/profile.json.
+Account-gated features remain controlled by OpenAI. System permissions remain
+user-controlled. Login, Keychain, browser integration and protected native
+features may differ after re-signing; the official app remains the fallback.
+Do not run both copies concurrently: native bundle/profile contracts are shared.
+
+Emergency safe mode (disables the added tuning, not the upstream app):
+  open -a '/Applications/Codex Community.app' --args --community-safe-mode
+Quit Community first. Delete Community to roll back; user data is not removed.
+Status file:
+  ~/Library/Application Support/Codex Community/memory/status.json
+The status file contains metrics, not prompts, code, tokens or command arguments.
+
+Automatic upstream updates may replace modifications. Rebuild this port from a
+new audited pin after upstream changes; do not assume patches survive updates.
