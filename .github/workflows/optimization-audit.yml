@@ -1,0 +1,74 @@
+name: Optimization contract audit
+on:
+  push:
+    branches: [feat/cross-platform-memory-budget]
+    paths: ['.github/workflows/optimization-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: macos-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - name: Snapshot source and inspect verified upstream contracts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p reports "$RUNNER_TEMP/mount"
+          git archive HEAD | gzip > reports/source.tar.gz
+          python3 - <<'PY'
+          import sys,json,subprocess,pathlib,hashlib,tarfile,io
+          sys.path.insert(0,'macos')
+          from asar import Archive
+          pin=json.load(open('macos/upstream.json'))
+          root=pathlib.Path(__import__('os').environ['RUNNER_TEMP'])
+          dmg=root/'upstream.dmg'; mount=root/'mount'
+          subprocess.run(['curl','--fail','--location','--proto','=https','--proto-redir','=https',pin['url'],'-o',str(dmg)],check=True)
+          h=hashlib.sha256()
+          with dmg.open('rb') as f:
+              for b in iter(lambda:f.read(4194304),b''):h.update(b)
+          assert h.hexdigest()==pin['sha256'],'Unreviewed upstream'
+          subprocess.run(['hdiutil','attach',str(dmg),'-readonly','-nobrowse','-mountpoint',str(mount)],check=True)
+          try:
+              apps=list(mount.glob('*.app'));assert len(apps)==1
+              app=apps[0]
+              subprocess.run(['codesign','--verify','--deep','--strict',str(app)],check=True)
+              detail=subprocess.run(['codesign','-dvvv',str(app)],capture_output=True,text=True,check=True).stderr
+              assert 'TeamIdentifier='+pin['teamID'] in detail
+              cli=app/'Contents/Resources/codex'
+              version=subprocess.run([str(cli),'--version'],capture_output=True,text=True,check=True).stdout
+              pathlib.Path('reports/backend-version.txt').write_text(version)
+              subprocess.run([str(cli),'app-server','generate-json-schema','--out','reports/schema'],check=True,timeout=60)
+              archive=Archive(app/'Contents/Resources/app.asar')
+              selected=[]; total=0
+              def walk(entry,prefix=''):
+                  for k,v in entry.get('files',{}).items():
+                      p=prefix+k
+                      if 'files' in v:yield from walk(v,p+'/')
+                      else:yield p,v
+              with tarfile.open('reports/contracts.tar.gz','w:gz') as out:
+                  for name,entry in walk(archive.header):
+                      if entry.get('unpacked') or 'link' in entry:continue
+                      if not name.endswith(('.js','.cjs','.json')) or entry.get('size',0)>32*1024*1024:continue
+                      if name!='package.json' and not name.startswith(('.vite/','webview/')):continue
+                      data=archive.read(name,32*1024*1024)
+                      if total+len(data)>200*1024*1024:raise RuntimeError('Inspection budget exceeded')
+                      item=tarfile.TarInfo(name);item.size=len(data);out.addfile(item,io.BytesIO(data))
+                      selected.append({'path':name,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()});total+=len(data)
+              archive.close()
+              pathlib.Path('reports/contracts-index.json').write_text(json.dumps(selected,indent=2))
+              print(version,'Selected text bytes',total)
+          finally:
+              subprocess.run(['hdiutil','detach',str(mount)],check=True)
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: optimization-contracts
+          path: reports/
+          retention-days: 3
+          if-no-files-found: error
