@@ -72,17 +72,23 @@ def sha256(path):
         for block in iter(lambda:f.read(4*1024*1024),b''):h.update(block)
     return h.hexdigest()
 
+def development_entitlements(original):
+    # Drop team-owned access rather than copying another developer's authority.
+    restricted={'com.apple.application-identifier','application-identifier','com.apple.developer.team-identifier','keychain-access-groups','com.apple.security.application-groups'}
+    cleaned={k:v for k,v in original.items() if k not in restricted}
+    if any(k.startswith('com.apple.developer.') for k in cleaned):
+        raise ValueError('Unknown restricted entitlement requires an explicit port review')
+    return cleaned, sorted(restricted.intersection(original))
+
 def entitlements(path):
     p=subprocess.run(['codesign','-d','--entitlements',':-',str(path)],capture_output=True)
     raw=p.stdout
     start=raw.find(b'<?xml')
     if start>=0:
         result=plistlib.loads(raw[start:])
-        # Do not impersonate restricted groups/identities belonging to OpenAI.
-        restricted={'com.apple.application-identifier','application-identifier','com.apple.developer.team-identifier','keychain-access-groups','com.apple.security.application-groups'}
-        if restricted.intersection(result):
-            raise RuntimeError('Source uses team-bound entitlements; a compatible Developer ID port is required: '+str(path))
-        return result
+        cleaned, removed=development_entitlements(result)
+        if removed:print('Development signing drops team-bound access:',str(path),','.join(removed),flush=True)
+        return cleaned
     return {}
 
 def sign_copy(app, root_ent, scratch):
@@ -154,7 +160,7 @@ def build(options):
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-arch','arm64','-mmacosx-version-min=13.0',f'-DCOMMUNITY_HEAP_MIB={int(profile["heapMiB"])}',f'-DUPSTREAM_EXECUTABLE="{original_exe}"',HERE/'launcher.c','-o',app/'Contents/MacOS/CodexCommunity'])
         info=community_plist(old,digest)
         (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
-        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'signing':'ad-hoc development; not notarized','hardLimitEnforced':False}
+        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no access to original app groups or keychain groups','hardLimitEnforced':False}
         (community/'build-info.json').write_text(json.dumps(provenance,indent=2)+'\n')
         sign_copy(app,root_ent,temp)
         plan=run([app/'Contents/MacOS/CodexCommunity','--community-launch-plan'],capture_output=True,text=True)
