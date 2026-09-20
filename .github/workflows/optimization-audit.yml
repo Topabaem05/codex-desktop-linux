@@ -33,6 +33,7 @@ jobs:
               for b in iter(lambda:f.read(4194304),b''):h.update(b)
           assert h.hexdigest()==pin['sha256'],'Unreviewed upstream'
           subprocess.run(['hdiutil','attach',str(dmg),'-readonly','-nobrowse','-mountpoint',str(mount)],check=True)
+          archive=None
           try:
               apps=list(mount.glob('*.app'));assert len(apps)==1
               app=apps[0]
@@ -54,7 +55,9 @@ jobs:
                   for name,entry in walk(archive.header):
                       if entry.get('unpacked') or 'link' in entry:continue
                       if not name.endswith(('.js','.cjs','.json')) or entry.get('size',0)>32*1024*1024:continue
-                      if name!='package.json' and not name.startswith(('.vite/','webview/')):continue
+                      if name!='package.json' and not name.startswith('.vite/build/'):
+                          if not name.startswith('webview/assets/'):continue
+                          if not pathlib.PurePosixPath(name).name.startswith(('app-initial-','app-shared-','virtualized-','thread-virtualizer-','WorkerPoolContext-','shiki-highlight-','ansi-block-','local-conversation-','file-diff-')):continue
                       data=archive.read(name,32*1024*1024)
                       if total+len(data)>200*1024*1024:raise RuntimeError('Inspection budget exceeded')
                       item=tarfile.TarInfo(name);item.size=len(data);out.addfile(item,io.BytesIO(data))
@@ -63,6 +66,7 @@ jobs:
               pathlib.Path('reports/contracts-index.json').write_text(json.dumps(selected,indent=2))
               print(version,'Selected text bytes',total)
           finally:
+              if archive is not None:archive.close()
               subprocess.run(['hdiutil','detach',str(mount)],check=True)
           PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
