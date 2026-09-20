@@ -12,12 +12,19 @@ function serverName(key){
  if(!match)throw Error('Unsupported MCP override key');
  return {name:match[1][0]==='"'?JSON.parse(match[1]):match[1],field:match[2]};
 }
+// ConfigRead serializes absent options as null, but TOML cannot represent null.
+function tomlValue(value){
+ if(Array.isArray(value))return value.map(tomlValue);
+ if(object(value))return Object.fromEntries(Object.entries(value).filter(([,v])=>v!==null).map(([k,v])=>[k,tomlValue(v)]));
+ if(value===null)throw Error('Null array element is not a TOML value');
+ return value;
+}
 function disableServers(effective,p){
  if(!object(effective)||!object(p.config??{}))throw Error('Invalid effective config');
  const config={...p.config},servers=Object.create(null);
  function merge(name,value){
   if(!name||name.length>256||/[\x00-\x1f\x7f]/u.test(name)||!object(value))throw Error('Invalid MCP table');
-  servers[name]={...servers[name],...value,enabled:false};
+  servers[name]={...servers[name],...tomlValue(value),enabled:false};
  }
  for(const [name,value] of Object.entries(effective))merge(name,value);
  if(config.mcp_servers!==undefined){

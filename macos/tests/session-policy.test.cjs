@@ -25,6 +25,13 @@ test('explicit table/flag overrides cannot re-enable metadata MCP after key sort
  assert.equal(result.config.mcp_servers.x.command,'node');
  assert.equal(Object.keys(result.config).some(k=>k.startsWith('mcp_servers.')),false);
 });
+test('serialized optional nulls are omitted before JSON-to-TOML overrides',()=>{
+ const result=api.disableServers({test:{command:'node',tool_timeout_sec:null,env:null,oauth:{resource:null,scopes:[]}}},p);
+ assert.equal(Object.hasOwn(result.config.mcp_servers.test,'tool_timeout_sec'),false);
+ assert.equal(Object.hasOwn(result.config.mcp_servers.test,'env'),false);
+ assert.deepEqual(result.config.mcp_servers.test.oauth,{scopes:[]});
+ assert.equal(result.config.mcp_servers.test.enabled,false);
+});
 test('normal user sessions and safe mode never read configuration',async()=>{
  const client={sendAppServerRequest(){throw Error('must not call');}};
  const ordinary={...p,threadSource:'user'};assert.equal(await api.prepareEphemeral(client,ordinary),ordinary);
