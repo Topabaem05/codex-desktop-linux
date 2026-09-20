@@ -1,0 +1,38 @@
+name: macOS original versus opt2 audit
+on:
+  push:
+    branches: [bench/opt2-ab-lifecycle]
+    paths: ['benchmarks/opt2-ab/**', '.github/workflows/macos-ab-audit.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: macos-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Validate diagnostic harness
+        run: |
+          python3 -m unittest discover -s benchmarks/opt2-ab -p test_metrics.py
+          node --check benchmarks/opt2-ab/lifecycle.cjs
+          node --check benchmarks/opt2-ab/queue.cjs
+          git diff --check
+      - name: Measure shipped binaries and controlled lifecycle fixtures
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 benchmarks/opt2-ab/run.py
+      - name: Publish observations, including failed cleanup cases
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: original-opt2-ab-lifecycle-evidence
+          path: ab-reports/*.json
+          retention-days: 7
+          if-no-files-found: error
