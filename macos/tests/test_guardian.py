@@ -36,7 +36,10 @@ class GuardianTest(unittest.TestCase):
 
     def test_binary_relay_argv_env_and_exit(self):
         blob = bytes(range(256)) * 4096
-        p = subprocess.run(self.command(sys.executable, '-c', 'import sys;sys.stdout.buffer.write(sys.stdin.buffer.read())'), input=blob, capture_output=True, timeout=6)
+        # Throughput/normal exit uses the production grace, not the accelerated
+        # 150ms teardown fixture. A short shutdown deadline may legitimately
+        # terminate a slow but cooperative interpreter after its output flush.
+        p = subprocess.run([str(self.bin), '--', sys.executable, '-c', 'import sys;sys.stdout.buffer.write(sys.stdin.buffer.read())'], input=blob, capture_output=True, timeout=10)
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stdout, blob)
         p = subprocess.run(self.command(sys.executable, '-c', 'import sys,os,json;print(json.dumps([sys.argv[1],os.environ["TEST_GUARD"],os.getcwd()]));sys.exit(7)', '한 글;$(false)'), env=dict(os.environ, TEST_GUARD='keep'), cwd=self.root, capture_output=True, text=True, timeout=4)
@@ -124,6 +127,18 @@ while True:time.sleep(.1)
                     except ProcessLookupError:pass
             if p.poll() is None:p.kill();p.wait()
             for f in [p.stdin,p.stdout,p.stderr]:f.close()
+
+    def test_shutdown_grace_is_explicit_not_a_delivery_guarantee(self):
+        # A caller choosing an accelerated deadline opts into interrupting work
+        # that outlives that deadline. The production grace accepts this drain.
+        code = 'import sys,time;sys.stdin.buffer.read();time.sleep(.4);print("drained",flush=True)'
+        fast = subprocess.run(self.command(sys.executable, '-c', code),
+                              input=b'x', capture_output=True, timeout=4)
+        self.assertEqual(fast.returncode, 128 + signal.SIGTERM)
+        normal = subprocess.run([str(self.bin), '--', sys.executable, '-c', code],
+                                input=b'x', capture_output=True, timeout=5)
+        self.assertEqual(normal.returncode, 0, normal.stderr)
+        self.assertEqual(normal.stdout, b'drained\n')
 
     def test_rejects_bad_options_and_propagates_exec_error(self):
         for args in [[], ['--grace-ms','-1','--','true'], ['--grace-ms','10x','--','true']]:

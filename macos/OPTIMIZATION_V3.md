@@ -13,7 +13,9 @@ are retained. Remote app servers, HTTP MCP, disabled entries, metadata-only
 requests and safe mode are not wrapped. Tool-free metadata requests still skip
 unneeded MCP startup. Existing transports are not retroactively changed.
 
-The native guardian creates a dedicated session/process group for the command,
+The native wrapper uses two small C processes: a backend-facing launcher and an
+isolated lifetime supervisor. The supervisor survives a direct launcher KILL and
+creates a dedicated session/process group for the command,
 relays stdin with a fixed 64 KiB buffer, and inherits stdout/stderr. Closing the
 transport, exiting its parent, terminating the guardian, or command exit starts
 teardown: close input, allow a 1-second grace, TERM the owned group, wait 1 second,
@@ -25,7 +27,7 @@ never reads cannot be promised delivery of pending input after shutdown.
 Mere unsubscribe/idle does not close a still-active transport. There is no new
 immediate-unload RPC. Session caches and native backend expiry still apply.
 No name-based process scanning or whole-user kills are used. This does not cover
-children which deliberately leave the process group, a guardian killed by KILL,
+children which deliberately leave the process group, the isolated supervisor itself killed by KILL,
 old unwrapped processes, shell/build daemons, every plugin or a fork bomb.
 
 For an intentionally persistent configured server, explicitly opt out in that
@@ -35,6 +37,9 @@ server's environment table (the application never writes this for you):
 [mcp_servers.my_server.env]
 CODEX_COMMUNITY_MCP_KEEPALIVE = "1"
 ```
+
+The keepalive flag bypasses only Community wrapping; upstream still controls its
+own child lifetimes.
 
 Configuration ambiguity or an unavailable guardian falls back to the original
 request and records a sanitized failure/skip counter. Counts in status.json are
