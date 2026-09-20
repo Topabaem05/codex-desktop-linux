@@ -14,21 +14,24 @@ function serverName(key){
 }
 function disableServers(effective,p){
  if(!object(effective)||!object(p.config??{}))throw Error('Invalid effective config');
- const config={...p.config},names=new Set(Object.keys(effective));
+ const config={...p.config},servers=Object.create(null);
+ function merge(name,value){
+  if(!name||name.length>256||/[\x00-\x1f\x7f]/u.test(name)||!object(value))throw Error('Invalid MCP table');
+  servers[name]={...servers[name],...value,enabled:false};
+ }
+ for(const [name,value] of Object.entries(effective))merge(name,value);
  if(config.mcp_servers!==undefined){
   if(!object(config.mcp_servers))throw Error('Invalid request MCP table');
-  config.mcp_servers=Object.fromEntries(Object.entries(config.mcp_servers).map(([name,value])=>{if(!object(value))throw Error('Invalid MCP table');names.add(name);return[name,{...value,enabled:false}];}));
+  for(const [name,value] of Object.entries(config.mcp_servers))merge(name,value);
  }
  for(const key of Object.keys(config))if(key.startsWith('mcp_servers.')){
-  const {name,field}=serverName(key);names.add(name);
-  if(field==='enabled')config[key]=false;
-  else if(!field){if(!object(config[key]))throw Error('Invalid MCP override');config[key]={...config[key],enabled:false};}
+  const {name,field}=serverName(key);
+  merge(name,field?{[field]:config[key]}:config[key]);delete config[key];
  }
- if(names.size>1024)throw Error('MCP configuration exceeds inspection budget');
- for(const name of names){
-  if(!name||name.length>256||/[\x00-\x1f\x7f]/u.test(name))throw Error('Invalid server name');
-  config[`mcp_servers.${JSON.stringify(name)}.enabled`]=false;
- }
+ if(Object.keys(servers).length>1024)throw Error('MCP configuration exceeds inspection budget');
+ // The bundled JSON override parser splits dot keys literally. It does not parse
+ // TOML quoted key syntax: use a nested value and retain each server's transport.
+ config.mcp_servers=servers;
  return {...p,config};
 }
 async function prepareEphemeral(client,p){
@@ -40,7 +43,7 @@ async function prepareEphemeral(client,p){
   // Missing effective table means no configured servers, not an unknown sample.
   if(!object(response?.config))throw Error('Config read shape changed');
   const result=disableServers(response.config.mcp_servers??{},p);
-  counts.prepared++;counts.serversDisabled+=Object.keys(result.config).filter(k=>k.startsWith('mcp_servers.')&&k.endsWith('.enabled')).length;
+  counts.prepared++;counts.serversDisabled+=Object.keys(result.config.mcp_servers).length;
   return result;
  }catch(error){
   guard(); // Auth/client disposal must not become a fallback request in a new lifetime.
