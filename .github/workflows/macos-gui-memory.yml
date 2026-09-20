@@ -1,0 +1,42 @@
+name: Original and opt3 GUI memory audit
+on:
+  push:
+    branches: [bench/opt3-gui-memory]
+    paths: ['benchmarks/opt3-gui/**', '.github/workflows/macos-gui-memory.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        kind: [stock, probe]
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22
+      - name: Validate metric accounting
+        run: |
+          python3 -m unittest discover -s benchmarks/opt3-gui -p test_metrics.py
+          node --check benchmarks/opt3-gui/probe-main.cjs
+          node --check benchmarks/opt3-gui/probe-preload.cjs
+          git diff --check
+      - name: Observe exact shipped binaries or equal diagnostic copies
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 benchmarks/opt3-gui/run.py ${{ matrix.kind }}
+      - name: Publish numeric evidence even if measurements fail
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: opt3-gui-${{ matrix.kind }}
+          path: gui-audit-reports/*.json
+          retention-days: 7
+          if-no-files-found: warn
