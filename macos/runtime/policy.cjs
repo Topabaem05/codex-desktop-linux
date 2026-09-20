@@ -4,6 +4,8 @@ const { fileURLToPath } = require('node:url');
 function trustedUI(value, appPath) {
   try {
     const url = new URL(value);
+    // Audited source/real boot 35480330932 serves packaged UI at app://-/.
+    if (url.protocol === 'app:') return url.hostname === '-' && !url.port && !url.username && !url.password;
     if (url.protocol !== 'file:' || url.host) return false;
     const relative = path.relative(appPath, fileURLToPath(url));
     return relative !== '' && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);

@@ -1,24 +1,22 @@
 # macOS Community DMG
 
-Apple Silicon / macOS 13+ 实验性开发构建。`sh macos/build-dmg.sh` 校验固定的
-官方 DMG SHA-256 与签名，只修改临时副本，连接实际应用的内存与渲染优化，
-重新签名并生成 DMG。安装后不需要 Node、Python 或 Xcode。官方已安装应用不变。
+Apple Silicon / macOS 13+ 实验性开发版。`sh macos/build-dmg.sh` 校验官方
+固定 DMG 与签名，在临时副本中接入真实应用优化、更新 ASAR 完整性信息、
+重新签名并生成 DMG。不会修改已安装的官方应用。
 
-所有**已实现且兼容 macOS 的优化**默认启用：512 MiB V8 old-space、原生物理
-占用/压力监控、后台节流、Markdown 动画减量、屏外绘制跳过、隐藏且空闲窗口
-在严重压力下释放未使用缓存，以及有界诊断文件。屏外绘制不是 DOM 虚拟化。
+默认启用所有已实现且兼容的优化：512 MiB V8 old-space、物理占用与压力监控、
+后台节流、Markdown 动画减量、屏外绘制跳过、隐藏空闲窗口的未使用缓存释放、
+有界状态文件。信任范围限已核实的 `app://-/` 和应用内文件地址。屏外绘制
+不是 DOM 虚拟化；500–900 MiB/agent 仍未验证，不是 macOS 1 GiB 内核硬上限。
+Linux cgroup/inotify/reaper 与尚未接入的 MCP、调度、React 模块不假称启用。
 
-这不是完整应用/单 agent 的 1 GiB 硬上限，也没有验证 500–900 MiB 目标。
-Linux cgroup、inotify、Linux reaper 及未接入的 MCP/工具调度/React 虚拟化不能
-仅靠开关移植，详见 `profile.json` 的 `notPorted`。不会解锁账户功能或系统权限。
+开发签名非 Developer ID/公证。原 APNs、应用组和共享钥匙串权限声明已移除。
+远程推送不可用，登录/原生 Computer Use 兼容性未认证。不得关闭 Gatekeeper、
+SIP、sandbox 或 TLS；仅验证来源后使用单应用批准。保留官方版，不同时运行。
+上游更新可能覆盖修改。完整细节见 [英文说明](README.md) 和 [签名说明](SIGNING.md)。
 
-应用是 ad-hoc 开发签名，未经 Developer ID 签名/公证。仅在验证来源后使用系统
-对单个应用的批准界面；不要关闭 Gatekeeper、SIP、sandbox 或 TLS 检查。
-重签名可能影响钥匙串/原生集成；保留官方应用回退。不要同时运行两个版本。
-上游自动更新可能覆盖修改，更新后应使用经过审查的新固定版本重新构建。
-
-安全模式（先完全退出）：
+安全模式（先退出）：
 `open -a '/Applications/Codex Community.app' --args --community-safe-mode`
 
-测试覆盖真实未登录应用启动、优化接口、代码签名和 DMG；不代表已测试登录、
-真实 agent、长会话或 Intel Mac。完整说明见 [英文文档](README.md)。
+成功 CI 验证真实未登录启动与 DMG；失败工件只有日志，不是可用安装包。
+不代表已测试登录、真实多 agent、长会话、Intel Mac 或所有 macOS 版本。

@@ -1,24 +1,15 @@
 # Linux 与 macOS 内存预算
 
-新增的可选模块 [low-memory-budget](linux-features/low-memory-budget/README.md)
-提供跨平台内存测量、有界显示缓冲、协作式任务准入、Linux cgroup 启动器及显式的
-Electron 堆大小实验。默认禁用，不修改官方 macOS 应用的签名或 ASAR，也不改变
-原有 Linux 打包流程。Linux 安装命令不能用于安装 macOS 应用。
+[macOS Community DMG](macos/README.md) 使用经过核验的 ARM64 原生应用，
+在临时副本中接入已实现的兼容优化，默认启用并生成开发签名 DMG。
+它不是官方签名/公证版本。原 APNs、应用组与共享钥匙串权限声明已移除；
+不承诺远程推送、登录或原生 Computer Use 集成兼容。保留官方应用回退。
 
-500–900 MiB 是工程目标，不是已测得的性能。Linux 的 1024 MiB 上限仅适用于独立
-进程域，可能触发 OOM。macOS 不提供等价的进程树硬限制，本模块会拒绝
-`--hard-limit`，不会用轮询杀进程伪装成内核限制。共享 app-server 中的会话不能
-分别通过操作系统限制内存。共享 UI、MCP 和浏览器成本必须计入整机总量。
+[跨平台工具包](linux-features/low-memory-budget/README.md) 本身提供监控、
+有界缓冲、协作式任务预算和 Linux cgroup 启动器，不修改已安装应用。
+Linux 打包默认值不变。500–900 MiB 是未验证的工作负载目标，不是实测保证；
+macOS 不提供这里所声称的单会话 1 GiB 硬限制。共享进程不能按对话强行拆账。
 
-在仓库根目录运行：
-
-```sh
-# macOS 先构建独立的只读观察器；不会修改 .app
-sh linux-features/low-memory-budget/native/build-macos.sh
-# Linux 和 macOS 通用测试
-node --test linux-features/low-memory-budget/test.js
-```
-
-完整用法、风险、回滚方法见模块 README；实际 Codex 的 8 GiB 设备基准测试仍是
-发布门槛。查看[设计文档](docs/superpowers/specs/2026-09-19-memory-budget-design.md)
-和[英文说明](LOW_MEMORY.md)。
+CI 会检查真实未登录应用启动和 DMG；不代表已验证登录、真实 agent、长会话
+或 Intel Mac。测试：`node --test linux-features/low-memory-budget/test.js`。
+Mac 先执行 `sh linux-features/low-memory-budget/native/build-macos.sh`。
