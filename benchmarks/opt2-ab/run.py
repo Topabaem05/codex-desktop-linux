@@ -76,14 +76,20 @@ def startup(app,mode,helper,window,index):
     for x in s['processes']:identities[x['pid']]=x
     result['samples'].append({'seconds':seconds,'footprintBytes':sum_footprint(s),'processCount':len(s['processes'])})
    # OS termination signal, not a claim of normal Cmd-Q coverage.
+   termination_started=time.monotonic()
    child.send_signal(signal.SIGTERM)
    try:child.wait(timeout=5)
    except subprocess.TimeoutExpired:pass
-   alive=[]
+   time.sleep(max(0,termination_started+5-time.monotonic()))
+   alive=[];unknown=[]
    for pid,idn in identities.items():
     s=sample(helper,pid)
     if s and same_identity(idn,s['root']):alive.append(pid)
+    elif s is None:
+     try:os.kill(pid,0);unknown.append(pid)
+     except ProcessLookupError:pass
    result['trackedSurvivors5sAfterSIGTERM']=len(alive)
+   result['unknownLivePidsAfterSIGTERM']=len(unknown)
    result['observed']=True
   except Exception as e:result.update(observed=False,error=str(e))
   finally:

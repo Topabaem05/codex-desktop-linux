@@ -23,6 +23,7 @@ jobs:
           python3 -m unittest discover -s benchmarks/opt2-ab -p test_metrics.py
           node --check benchmarks/opt2-ab/lifecycle.cjs
           node --check benchmarks/opt2-ab/queue.cjs
+          node --test benchmarks/opt2-ab/lifecycle-safety.test.cjs
           git diff --check
       - name: Measure shipped binaries and controlled lifecycle fixtures
         env:

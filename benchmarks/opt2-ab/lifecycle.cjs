@@ -7,7 +7,8 @@ const {LineDecoder}=require('../../macos/runtime/telemetry.cjs');
 const policy=require('../../macos/runtime/session-policy.cjs');
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function probe(helper,pid){try{return JSON.parse(execFileSync(helper,[String(pid)],{timeout:3000,stdio:['ignore','pipe','ignore']}));}catch{return null;}}
-function same(a,b){return !!a&&!!b&&a.pid===b.pid&&a.uid===b.uid&&a.startId===b.startId;}
+function same(a,b){return !!a&&!!b&&!!a.startId&&a.pid===b.pid&&a.uid===b.uid&&a.startId===b.startId;}
+function exists(pid){try{process.kill(pid,0);return true;}catch(e){return e.code!=='ESRCH';}}
 async function scenario(binary,helper,mode,shutdown,fixture,rounds){
  const root=await fs.mkdtemp(path.join(os.tmpdir(),'codex-ab-'));const marker=path.join(root,'starts');
  const sentinel=path.join(root,'sentinel.cjs');let child,sequence=0,closed=false;const pending=new Map(),known=new Map();
@@ -46,14 +47,16 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:x.id,result})+'\\n');});}
    for(const line of lines)if(!known.has(line.pid)){
     const p=probe(helper,line.pid);if(p&&p.root.uid===process.getuid())known.set(line.pid,p.root);
    }
-   const live=[];
+   const live=[],unknown=[];
+   for(const row of lines)if(!known.has(row.pid)&&exists(row.pid))unknown.push(row.pid);
    for(const [pid,id]of known){const p=probe(helper,pid);if(same(p?.root,id)){
-    const stat=execFileSync('ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim();
-    if(!stat.startsWith('Z'))live.push(pid);
-   }}
+    try{const stat=execFileSync('ps',['-p',String(pid),'-o','stat='],{encoding:'utf8'}).trim();
+     if(!stat.startsWith('Z'))live.push(pid);
+    }catch{if(exists(pid))unknown.push(pid);}
+   }else if(!p&&exists(pid))unknown.push(pid);}
    const tree=!closed?probe(helper,child.pid):null;
    const rows=tree?.processes;const bytes=rows?.every(x=>Number.isInteger(x.footprintBytes))?rows.reduce((a,b)=>a+b.footprintBytes,0):null;
-   return {starts:lines.length,serverStarts:lines.filter(x=>x.kind==='server').length,knownIdentities:known.size,liveFixtureProcesses:live.length,treeFootprintBytes:bytes};
+   return {starts:lines.length,serverStarts:lines.filter(x=>x.kind==='server').length,knownIdentities:known.size,liveFixtureProcesses:live.length,unknownLiveIdentities:unknown.length,treeFootprintBytes:bytes};
   }
   await request('initialize',{clientInfo:{name:'community_ab_audit',version:'1'},capabilities:{experimentalApi:true}});
   child.stdin.write(JSON.stringify({method:'initialized'})+'\n');
@@ -80,7 +83,7 @@ process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:x.id,result})+'\\n');});}
   if(shutdown==='crash')child.kill('SIGKILL');else child.stdin.end();
   await sleep(5000);result.serverExited=closed;
   result.afterShutdown5s=await capture();
-  result.automaticCleanupPass=closed&&result.afterShutdown5s.liveFixtureProcesses===0;
+  result.automaticCleanupPass=closed&&result.afterShutdown5s.liveFixtureProcesses===0&&result.afterShutdown5s.unknownLiveIdentities===0;
   result.observationComplete=true;
  }catch(e){result.error=e.message;result.errorTail=errorTail;result.observationComplete=false;}
  finally{
