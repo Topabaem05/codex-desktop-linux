@@ -2,7 +2,7 @@
 """Reproduce startup and lifecycle comparisons in a disposable macOS CI account.
 No account login/model turn. No global kills. No production package modifications.
 """
-import hashlib,json,os,pathlib,plistlib,shutil,signal,subprocess,sys,tempfile,time,urllib.request,urllib.error,zipfile
+import hashlib,json,os,pathlib,plistlib,re,shutil,signal,subprocess,sys,tempfile,time,urllib.request,urllib.error,zipfile
 HERE=pathlib.Path(__file__).resolve().parent
 ROOT=HERE.parents[1]
 EXPECTED_DMG='f5f9d06e99dae41a6689a8be0e9c335deb25cd067dfc343ddc7eaee540cc1149'
@@ -50,51 +50,71 @@ def cleanup_known(helper,identities):
    try:os.kill(identity['pid'],signal.SIGKILL)
    except ProcessLookupError:pass
 
+def markers(text):
+ patterns={
+  'primaryReadyReportedMs':r'window ready-to-show appearance=primary[^\n]*startupElapsedMs=(\d+)',
+  'criticalPathReportedMs':r'Host startup critical-path phases completed startupElapsedMs=(\d+)',
+  'routesMountedReportedMs':r'app routes mounted after (\d+)ms'}
+ return {key:int(m.group(1)) for key,pat in patterns.items() if (m:=re.search(pat,text))}
+
 def startup(app,mode,helper,window,index):
  info=plistlib.loads((app/'Contents/Info.plist').read_bytes());exe=app/'Contents/MacOS'/info['CFBundleExecutable']
- result={'mode':mode,'trial':index,'scope':'fresh unauthenticated profile; warm OS file caches; first ordinary window, not interactive readiness'}
+ result={'mode':mode,'trial':index,'scope':'fresh CODEX_HOME/user-data; native HOME retained; unauthenticated warm OS caches; logged milestones are not task readiness'}
  identities={};child=None;watch=None
- with tempfile.TemporaryDirectory(prefix='codex-ab-gui-') as tmp:
-  p=pathlib.Path(tmp)
-  env={k:os.environ[k] for k in ('PATH','TMPDIR','LANG','__CF_USER_TEXT_ENCODING') if k in os.environ}
-  env.update(HOME=tmp,CODEX_HOME=str(p/'codex'),CODEX_COMMUNITY_STATE_DIR=str(p/'state'))
+ # Logs live only in disposable CI storage; only milestones and bounded errors are published.
+ with tempfile.TemporaryDirectory(prefix='codex-ab-gui-',ignore_cleanup_errors=True) as tmp:
+  p=pathlib.Path(tmp);logpath=p/'boot.log'
+  env={k:os.environ[k] for k in ('PATH','TMPDIR','LANG','HOME','USER','LOGNAME','SHELL','__CF_USER_TEXT_ENCODING','XPC_FLAGS','XPC_SERVICE_NAME','COMMAND_MODE','SECURITYSESSIONID') if k in os.environ}
+  env.update(CODEX_HOME=str(p/'codex'),CODEX_COMMUNITY_STATE_DIR=str(p/'state'))
   try:
-   started=time.monotonic()
-   child=subprocess.Popen([str(exe),'--user-data-dir='+str(p/'profile')],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,start_new_session=True)
-   watch=subprocess.Popen([str(window),str(child.pid)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-   while watch.poll() is None and time.monotonic()-started<32:
-    if child.poll() is not None:raise RuntimeError('App exited before window')
-    time.sleep(.02)
-   if watch.poll()!=0:raise RuntimeError('Window visibility measurement unavailable')
-   result['firstWindowMs']=round((time.monotonic()-started)*1000,2)
-   result['samples']=[]
-   for seconds in (10,20):
-    time.sleep(max(0,started+seconds-time.monotonic()))
-    if child.poll() is not None:raise RuntimeError('App exited during idle sample')
-    s=sample(helper,child.pid)
-    if not s:raise RuntimeError('Native sample unavailable')
-    for x in s['processes']:identities[x['pid']]=x
-    result['samples'].append({'seconds':seconds,'footprintBytes':sum_footprint(s),'processCount':len(s['processes'])})
-   # OS termination signal, not a claim of normal Cmd-Q coverage.
-   termination_started=time.monotonic()
-   child.send_signal(signal.SIGTERM)
+   with logpath.open('wb') as log:
+    started=time.monotonic()
+    child=subprocess.Popen([str(exe),'--user-data-dir='+str(p/'profile')],env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+    watch=subprocess.Popen([str(window),str(child.pid)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    result['samples']=[]
+    for seconds in (1,5,10,20,25):
+     while time.monotonic()<started+seconds:
+      if watch.poll()==0 and 'firstWindowMs' not in result:result['firstWindowMs']=round((time.monotonic()-started)*1000,2)
+      if child.poll() is not None:break
+      time.sleep(.05)
+     if child.poll() is not None:raise RuntimeError('App exited during idle sample')
+     snap=sample(helper,child.pid)
+     if not snap:raise RuntimeError('Native sample unavailable')
+     for x in snap['processes']:identities[x['pid']]=x
+     result['samples'].append({'seconds':seconds,'footprintBytes':sum_footprint(snap),'processCount':len(snap['processes'])})
+    log.flush()
+   text=logpath.read_text(errors='replace');result.update(markers(text))
+   result['windowMeasurementAvailable']='firstWindowMs' in result
+   result['runtimeDownloadObserved']='primary_runtime_bundle_install_started' in text
+   status=p/'state/status.json'
+   if status.exists():
+    state=json.loads(status.read_text());result['opt2Status']={k:state.get(k) for k in ('pid','ready','safeMode','samples','uiApplied','preloadReady','lastError')}
+   if 'primaryReadyReportedMs' not in result:
+    result['bootDiagnosticsTail']=text[-6000:]
+   termination_started=time.monotonic();child.send_signal(signal.SIGTERM)
    try:child.wait(timeout=5)
    except subprocess.TimeoutExpired:pass
    time.sleep(max(0,termination_started+5-time.monotonic()))
    alive=[];unknown=[]
    for pid,idn in identities.items():
-    s=sample(helper,pid)
-    if s and same_identity(idn,s['root']):alive.append(pid)
-    elif s is None:
+    snap=sample(helper,pid)
+    if snap and same_identity(idn,snap['root']):alive.append(pid)
+    elif snap is None:
      try:os.kill(pid,0);unknown.append(pid)
      except ProcessLookupError:pass
-   result['trackedSurvivors5sAfterSIGTERM']=len(alive)
-   result['unknownLivePidsAfterSIGTERM']=len(unknown)
-   result['observed']=True
-  except Exception as e:result.update(observed=False,error=str(e))
+   result['trackedSurvivors5sAfterSIGTERM']=len(alive);result['unknownLivePidsAfterSIGTERM']=len(unknown)
+   result['observed']='primaryReadyReportedMs' in result
+  except Exception as e:
+   result.update(observed=False,error=str(e))
+   if logpath.exists():result['bootDiagnosticsTail']=logpath.read_text(errors='replace')[-6000:]
   finally:
    if watch and watch.poll() is None:watch.kill();watch.wait(timeout=3)
-   if child and child.poll() is None:child.kill();child.wait(timeout=3)
+   # Capture late descendants while the known root still exists before harness cleanup.
+   if child and child.poll() is None:
+    snap=sample(helper,child.pid)
+    if snap:
+     for x in snap['processes']:identities[x['pid']]=x
+    child.kill();child.wait(timeout=3)
    cleanup_known(helper,identities)
  return result
 
@@ -120,11 +140,11 @@ def main():
   helper=ROOT/'linux-features/low-memory-budget/native/macos-memory';window=p/'window'
   subprocess.run(['sh',str(ROOT/'linux-features/low-memory-budget/native/build-macos.sh')],check=True)
   subprocess.run(['xcrun','clang','-std=c11','-O2','-Wall','-Wextra','-Werror',str(HERE/'window.c'),'-framework','CoreGraphics','-framework','CoreFoundation','-o',str(window)],check=True)
+  subprocess.run(['node',str(HERE/'lifecycle.cjs'),str(original_app/'Contents/Resources/codex'),str(optimized_app/'Contents/Resources/codex'),str(helper),str(reports/'lifecycle.json')],check=True,timeout=400)
   output={'environment':envinfo,'originalDmgSHA256':pin['sha256'],'optimizedDmgSHA256':EXPECTED_DMG,'modelTurns':0,'startup':[]}
   for index,mode in enumerate(['original','opt2','opt2','original','original','opt2'],1):
    r=startup(original_app if mode=='original' else optimized_app,mode,helper,window,index)
    output['startup'].append(r);(reports/'startup.json').write_text(json.dumps(output,indent=2));print(json.dumps(r),flush=True)
-  subprocess.run(['node',str(HERE/'lifecycle.cjs'),str(original_app/'Contents/Resources/codex'),str(optimized_app/'Contents/Resources/codex'),str(helper),str(reports/'lifecycle.json')],check=True,timeout=400)
   sys.path.insert(0,str(ROOT/'macos'))
   from asar import Archive
   paths=[]

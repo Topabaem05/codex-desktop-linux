@@ -5,9 +5,13 @@ Diagnostic-only branch; does not change the app, runtime settings or previous DM
 - Inputs: audited original 26.915.31945 DMG and the exact opt2 artifact 10603397258.
   Both archive and extracted DMG hashes are checked before execution.
 - Startup: original/opt2/opt2/original/original/opt2 on the same macOS runner.
-  Each starts with fresh disposable HOME, CODEX_HOME and Chromium user data.
-  First ordinary-window time is NOT interactive readiness. No purge of OS disk caches.
-  Footprints are sampled at 10 and 20 seconds from process launch. Process SIGTERM
+  Each GUI starts with disposable CODEX_HOME and Chromium user data while retaining
+  the clean runner native HOME/XPC environment, matching the validated app smoke.
+  Source-reported primary-window and renderer milestones are recorded separately;
+  CoreGraphics window timing is optional and is NOT interactive readiness.
+  No purge of OS disk caches. Footprints are sampled at 1, 5, 10, 20 and 25 seconds.
+  Optional runtime downloading and missing milestones are reported, not counted
+  as a speedup. Native lifecycle tests run before the independent GUI trials. SIGTERM
   is NOT a UI Cmd-Q test. Three repetitions are descriptive, not statistical proof.
 - Native MCP: two bounded fixture servers, one child each, at most six metadata
   sessions per case. Positive controls must start servers. Comparisons use the
@@ -27,4 +31,5 @@ false; inspect lifecycle.json. Positive-control/measurement failures fail CI.
 
 Run with an artifact-read GitHub token in GH_TOKEN on a disposable Mac account:
 `python3 benchmarks/opt2-ab/run.py`. Never use an account with active Codex work.
-No user project is modified; artifacts contain metrics/fixture evidence, no auth.
+No user project is modified; artifacts contain metrics/fixture evidence and bounded
+error logs from the disposable, unauthenticated test environment, never auth tokens.
