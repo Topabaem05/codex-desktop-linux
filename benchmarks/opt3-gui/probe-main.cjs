@@ -1,6 +1,6 @@
 'use strict';
 // Equal instrumentation in temporary original/opt3 copies; never shipped.
-const {app,ipcMain,webContents}=require('electron');
+const {app,ipcMain,webContents,BrowserWindow}=require('electron');
 const fs=require('node:fs/promises'),path=require('node:path'),v8=require('node:v8');
 const {randomUUID}=require('node:crypto');
 const destination=process.env.CODEX_GUI_AUDIT_DIR;
@@ -30,6 +30,8 @@ async function snapshot(label,clear=false){
  const contents=webContents.getAllWebContents().filter(w=>!w.isDestroyed()).slice(0,32);
  const rows=await Promise.all(contents.map(async wc=>{
   const row={id:wc.id,type:wc.getType(),pid:wc.getOSProcessId(),originClass:bucket(wc.getURL()),loading:wc.isLoading()};
+  const win=BrowserWindow.fromWebContents(wc);row.windowVisible=win?win.isVisible():null;
+  row.windowMinimized=win?win.isMinimized():null;row.backgroundThrottling=wc.getBackgroundThrottling();
   row.probe=await inspect(wc,clear);return row;
  }));
  const rtt=[];

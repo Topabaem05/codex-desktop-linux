@@ -5,8 +5,8 @@ if(process.isMainFrame!==false){
  ipcRenderer.on('gui-audit:sample',async(_event,token,clear)=>{
   try{
    const resources=webFrame.getResourceUsage();
-   const unused=Object.values(resources).reduce((n,x)=>n+(Number(x?.unusedSize)||0),0);
-   const out={token,pid:process.pid,visibility:document.visibilityState,
+   const unused=Object.values(resources).reduce((n,x)=>n+Math.max(0,(Number(x?.size)||0)-(Number(x?.liveSize)||0)),0);
+   const out={token,pid:process.pid,visibility:document.visibilityState,unusedCacheBytes:unused,
     heapKiB:process.getHeapStatistics(),blinkKiB:process.getBlinkMemoryInfo(),
     processKiB:await process.getProcessMemoryInfo(),resourcesBytes:resources,
     domNodes:document.getElementsByTagName('*').length,iframeCount:document.querySelectorAll('iframe').length,

@@ -25,10 +25,12 @@ jobs:
       - name: Validate metric accounting
         run: |
           python3 -m unittest discover -s benchmarks/opt3-gui -p test_metrics.py
+          node --test benchmarks/opt3-gui/probe.test.cjs
           node --check benchmarks/opt3-gui/probe-main.cjs
           node --check benchmarks/opt3-gui/probe-preload.cjs
           git diff --check
       - name: Observe exact shipped binaries or equal diagnostic copies
+        if: matrix.kind != 'stock' || !contains(github.event.head_commit.message, '[probe-only]')
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 benchmarks/opt3-gui/run.py ${{ matrix.kind }}
