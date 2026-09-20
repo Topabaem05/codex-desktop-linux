@@ -103,7 +103,7 @@ def build(options):
     if profile['name']!='all-compatible' or not all(v is True for v in profile['features'].values()):
         raise ValueError('Release profile must enable every implemented compatible feature')
     out=Path(options.output).resolve();out.mkdir(parents=True,exist_ok=True)
-    dmg_name=f"Codex-Community-{pin['version']}-arm64-dev.dmg";final=out/dmg_name
+    dmg_name=f"Codex-Community-{pin['version']}-arm64-opt2-dev.dmg";final=out/dmg_name
     if final.exists():raise FileExistsError(f'Refusing to overwrite existing artifact: {final}')
     with tempfile.TemporaryDirectory(prefix='codex-community-build-') as tmp:
         temp=Path(tmp);mount=temp/'mount';mount.mkdir();stage=temp/'image';stage.mkdir()
@@ -127,12 +127,15 @@ def build(options):
         finally:run(['hdiutil','detach',mount])
         sys.path.insert(0,str(HERE))
         from asar import Archive, patch
+        from optimization_patches import prepare
         archive_path=app/'Contents/Resources/app.asar';archive=Archive(archive_path)
-        original_hash=archive.header_hash;archive.close()
+        original_hash=archive.header_hash
+        try:overlays,optimization_report=prepare(archive)
+        finally:archive.close()
         if old.get('ElectronAsarIntegrity',{}).get('Resources/app.asar',{}).get('hash')!=original_hash:
             raise ValueError('Source ASAR header integrity mismatch')
         new_archive=archive_path.with_suffix('.asar.community')
-        digest=patch(archive_path,new_archive);os.replace(new_archive,archive_path)
+        digest=patch(archive_path,new_archive,overlays=overlays);os.replace(new_archive,archive_path)
         community=app/'Contents/Resources/community';community.mkdir()
         for p in (HERE/'runtime').glob('*.cjs'):shutil.copy2(p,community/p.name)
         shutil.copy2(HERE/'profile.json',community/'profile.json')
@@ -141,12 +144,24 @@ def build(options):
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-fblocks','-arch','arm64','-mmacosx-version-min=13.0',ROOT/'linux-features/low-memory-budget/native/macos-memory.c','-o',budget/'native/macos-memory'])
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-arch','arm64','-mmacosx-version-min=13.0',f'-DCOMMUNITY_HEAP_MIB={int(profile["heapMiB"])}',f'-DUPSTREAM_EXECUTABLE="{original_exe}"',HERE/'launcher.c','-o',app/'Contents/MacOS/CodexCommunity'])
         (app/'Contents/Info.plist').write_bytes(plistlib.dumps(community_plist(old,digest)))
-        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no original app groups, keychain groups or APNs production access','hardLimitEnforced':False}
+        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'optimizationRevision':2,'patches':optimization_report,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no original app groups, keychain groups or APNs production access','hardLimitEnforced':False}
         (community/'build-info.json').write_text(json.dumps(provenance,indent=2)+'\n')
+        # Verify actual transformed JS syntax and state/stream behavior in Node before signing.
+        node=shutil.which('node')
+        if node is None:raise RuntimeError('Node 22+ is required for build-time contract verification')
+        for name,data in overlays.items():
+            js=temp/(Path(name).stem+'.'+('mjs' if name.startswith('webview/') else 'cjs'))
+            js.write_bytes(data);run([node,'--check',js])
+        contract=temp/'main-contract.cjs';contract.write_bytes(overlays['.vite/build/main-DUHZj4_w.js'])
+        run([node,HERE/'tests/audited_contracts.cjs',contract])
         sign_copy(app,root_ent,temp)
+        with (out/'backend-conformance.json').open('w') as evidence:
+            run([node,HERE/'tests/backend-conformance.cjs',app/'Contents/Resources/codex'],stdout=evidence)
+
         plan=run([app/'Contents/MacOS/CodexCommunity','--community-launch-plan'],capture_output=True,text=True)
         if json.loads(plan.stdout)['heapMiB']!=profile['heapMiB']:raise ValueError('Launcher profile mismatch')
         run([sys.executable,HERE/'smoke.py',app,out/'smoke.json',out/'smoke.log'])
+        run([sys.executable,HERE/'smoke.py',app,out/'safe-smoke.json',out/'safe-smoke.log','safe'])
         shutil.copy2(HERE/'INSTALL.txt',stage/'INSTALL.txt');(stage/'Applications').symlink_to('/Applications',target_is_directory=True)
         candidate=temp/dmg_name;run(['hdiutil','create','-volname','Codex Community','-srcfolder',stage,'-format','UDZO',candidate])
         run(['hdiutil','verify',candidate]);run(['hdiutil','attach',candidate,'-readonly','-nobrowse','-mountpoint',mount])

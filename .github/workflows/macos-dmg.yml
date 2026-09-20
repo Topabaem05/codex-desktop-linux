@@ -14,6 +14,8 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
@@ -22,31 +24,49 @@ jobs:
           python3 -m unittest discover -s macos/tests -p 'test_*.py'
           node --test macos/tests/*.test.cjs linux-features/low-memory-budget/test.js
           sh -n macos/build-dmg.sh
+          git diff --check
   dmg:
     runs-on: macos-latest
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
       - name: Tests and native observer
-        run: |
-          sh linux-features/low-memory-budget/native/build-macos.sh
-          python3 -m unittest discover -s macos/tests -p 'test_*.py'
-          node --test macos/tests/*.test.cjs linux-features/low-memory-budget/test.js
-      - name: Build, launch actual app, verify DMG
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p macos/dist
+          sh linux-features/low-memory-budget/native/build-macos.sh
+          python3 -m unittest discover -s macos/tests -p 'test_*.py' 2>&1 | tee macos/dist/python-tests.log
+          node --test macos/tests/*.test.cjs linux-features/low-memory-budget/test.js | tee macos/dist/node-tests.tap
+      - name: Build, backend conformance, normal/safe boot and DMG verification
+        shell: bash
+        run: |
+          set -euo pipefail
           sh macos/build-dmg.sh 2>&1 | tee macos/dist/build.log
-      - name: Publish DMG and verification evidence
+      - name: Publish validated DMG
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: Codex-Community-macOS-arm64-opt2-dev
+          path: |
+            macos/dist/*.dmg
+            macos/dist/SHA256SUMS
+          compression-level: 0
+          retention-days: 7
+          if-no-files-found: error
+      - name: Publish separate verification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: Codex-Community-macOS-arm64-dev
-          path: macos/dist/
-          compression-level: 0
+          name: macOS-optimization-v2-evidence
+          path: |
+            macos/dist/*.json
+            macos/dist/*.log
+            macos/dist/*.tap
           retention-days: 7
           if-no-files-found: error

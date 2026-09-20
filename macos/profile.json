@@ -1,7 +1,7 @@
 {
   "name": "all-compatible",
   "heapMiB": 512,
-  "sampleMs": 5000,
+  "sampleMs": 15000,
   "cacheCooldownMs": 60000,
   "features": {
     "nativeFootprint": true,
@@ -10,13 +10,26 @@
     "reducedMarkdownMotion": true,
     "offscreenPaintSkipping": true,
     "idleRendererCacheRelease": true,
-    "boundedDiagnostics": true
+    "boundedDiagnostics": true,
+    "roleAccounting": true,
+    "persistentObserver": true,
+    "metadataMcpIsolation": true,
+    "inactiveHistoryBudget": true,
+    "streamBatching": true,
+    "highlightWorkerBudget": true
   },
   "notPorted": {
     "cgroupHardCap": "Linux kernel facility; no macOS per-conversation equivalent",
     "watchboundInotify": "Linux native dependency; upstream macOS watcher retained",
     "linuxHelperReapers": "Linux process identity checks cannot safely be reused on macOS",
-    "mcpPoolingAndToolAdmission": "Requires app-server integration; must not share stateful MCP sessions blindly",
-    "transcriptVirtualization": "Requires React state integration; paint skipping is not DOM virtualization"
+    "mcpPoolingAndToolAdmission": "Global tool scheduling inside the Rust engine and stateful MCP pooling are not intercepted",
+    "immediateThreadUnload": "Bundled protocol has no non-destructive immediate unload endpoint; retain supported unsubscribe"
+  },
+  "pressureSampleMs": 5000,
+  "reusedUpstream": {
+    "conversationVirtualization": "existing virtualizer, overscan 2 to 1",
+    "outputTail": "existing 20000-character UI tail retained; no model context truncation",
+    "inactiveHistory": "eligible inactive owners: 2 cached, 60s TTL; active/approval/follower protections retained",
+    "highlighting": "2 workers, 32 AST entries; not a byte-exact cache limit"
   }
 }

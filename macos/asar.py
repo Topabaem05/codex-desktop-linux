@@ -71,7 +71,7 @@ class Archive:
             raise ValueError('Truncated entry')
         return value
 
-def patch(source, destination):
+def patch(source, destination, overlays=None):
     source, destination = Path(source), Path(destination)
     if source.resolve() == destination.resolve() or destination.exists():
         raise ValueError('A new destination is required')
@@ -94,9 +94,23 @@ def patch(source, destination):
         ).encode()
         additions = {'package.json': json.dumps(package, ensure_ascii=False, separators=(',', ':')).encode(),
                      '.community-bootstrap.cjs': bootstrap}
+        for name, data in (overlays or {}).items():
+            parts = PurePosixPath(name).parts
+            if not parts or name.startswith('/') or '..' in parts or '\\' in name or name in additions:
+                raise ValueError('Unsafe or reserved overlay path')
+            if not isinstance(data, bytes) or len(data) > 32 * 1024 * 1024:
+                raise ValueError('Invalid overlay content')
+            additions[name] = data
         offset = archive.data_size
         for name, data in additions.items():
-            archive.header['files'][name] = {'size':len(data), 'offset':str(offset), 'integrity': {
+            parent = archive.header
+            parts = PurePosixPath(name).parts
+            for part in parts[:-1]:
+                node = parent['files'].setdefault(part, {'files': {}})
+                if 'files' not in node or 'link' in node:
+                    raise ValueError('Overlay collides with non-directory')
+                parent = node
+            parent['files'][parts[-1]] = {'size':len(data), 'offset':str(offset), 'integrity': {
                 'algorithm':'SHA256', 'hash':hashlib.sha256(data).hexdigest(), 'blockSize':BLOCK,
                 'blocks':[hashlib.sha256(data[i:i+BLOCK]).hexdigest() for i in range(0,len(data),BLOCK)]}}
             offset += len(data)

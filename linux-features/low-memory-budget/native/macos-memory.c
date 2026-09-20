@@ -29,6 +29,17 @@ static void identity(const struct proc_bsdinfo *b) {
     printf("\"pid\":%u,\"ppid\":%u,\"uid\":%u,\"startId\":\"%" PRIu64 ":%" PRIu64 "\"",
         b->pbi_pid, b->pbi_ppid, b->pbi_uid, b->pbi_start_tvsec, b->pbi_start_tvusec);
 }
+static const char *role(pid_t pid) {
+    char buf[PROC_PIDPATHINFO_MAXSIZE];
+    if (proc_pidpath(pid, buf, sizeof(buf)) <= 0) return "other";
+    const char *name = strrchr(buf, '/'); name = name ? name + 1 : buf;
+    if (!strcmp(name, "codex") || !strcmp(name, "codex-app-server")) return "codex-engine";
+    if (!strcmp(name, "macos-memory")) return "observer";
+    if (!strcmp(name, "node") || !strcmp(name, "node_repl")) return "node-tool";
+    if (!strncmp(name, "python", 6)) return "python-tool";
+    if (!strcmp(name, "rustc") || !strcmp(name, "clang") || !strcmp(name, "swift-frontend")) return "build-tool";
+    return "other";
+}
 static int take_snapshot(pid_t root_pid) {
     struct proc_bsdinfo original = {0}, final = {0};
     if (proc_pidinfo(root_pid, PROC_PIDTBSDINFO, 0, &original, sizeof(original)) != (int)sizeof(original) || original.pbi_uid != getuid()) {
@@ -70,6 +81,7 @@ static int take_snapshot(pid_t root_pid) {
             proc_pidinfo((pid_t)rows[i].info.pbi_pid, PROC_PIDTBSDINFO, 0, &after, sizeof(after)) == (int)sizeof(after) && same(&rows[i].info, &after);
         if (!first) printf(",");
         first = 0; printf("{"); identity(&rows[i].info);
+        printf(",\"role\":\"%s\"", role((pid_t)rows[i].info.pbi_pid));
         if (ok) printf(",\"rssBytes\":%" PRIu64 ",\"footprintBytes\":%" PRIu64 "}", usage.ri_resident_size, usage.ri_phys_footprint);
         else printf(",\"rssBytes\":null,\"footprintBytes\":null}");
     }
@@ -92,11 +104,42 @@ static int watch_pressure(void) {
     dispatch_resume(source); dispatch_main();
     return 0;
 }
+static struct proc_bsdinfo watch_identity;
+static dispatch_source_t watch_timer;
+static pid_t watch_pid;
+static void watch_tick(void) {
+    struct proc_bsdinfo current = {0};
+    if (proc_pidinfo(watch_pid, PROC_PIDTBSDINFO, 0, &current, sizeof(current)) != (int)sizeof(current) ||
+        !same(&watch_identity, &current) || take_snapshot(watch_pid) != 0) exit(3);
+}
+static int watch_tree(pid_t pid) {
+    watch_pid = pid;
+    if (proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &watch_identity, sizeof(watch_identity)) != (int)sizeof(watch_identity) ||
+        watch_identity.pbi_uid != getuid()) return 3;
+    dispatch_source_t pressure = dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0,
+        DISPATCH_MEMORYPRESSURE_NORMAL | DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL, dispatch_get_main_queue());
+    watch_timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0, dispatch_get_main_queue());
+    if (!pressure || !watch_timer) return 3;
+    dispatch_source_set_event_handler(watch_timer, ^{ watch_tick(); });
+    dispatch_source_set_event_handler(pressure, ^{
+        unsigned long flags = dispatch_source_get_data(pressure);
+        const char *state = (flags & DISPATCH_MEMORYPRESSURE_CRITICAL) ? "critical" :
+            (flags & DISPATCH_MEMORYPRESSURE_WARN) ? "warning" : "normal";
+        printf("{\"pressure\":\"%s\"}\n", state);
+        uint64_t interval = !strcmp(state, "normal") ? 15 * NSEC_PER_SEC : 5 * NSEC_PER_SEC;
+        dispatch_source_set_timer(watch_timer, DISPATCH_TIME_NOW, interval, NSEC_PER_SEC);
+    });
+    printf("{\"pressure\":\"unknown\"}\n");
+    dispatch_source_set_timer(watch_timer, DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC, NSEC_PER_SEC);
+    dispatch_resume(watch_timer); dispatch_resume(pressure); dispatch_main();
+    return 0;
+}
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
-    if (argc != 2) { fprintf(stderr, "usage: macos-memory PID | --pressure\n"); return 2; }
+    int watch = argc == 3 && !strcmp(argv[1], "--watch");
+    if (argc != 2 && !watch) { fprintf(stderr, "usage: macos-memory PID | --pressure | --watch PID\n"); return 2; }
     if (!strcmp(argv[1], "--pressure")) return watch_pressure();
-    char *end = NULL; errno = 0; long value = strtol(argv[1], &end, 10);
+    char *end = NULL; errno = 0; long value = strtol(argv[watch ? 2 : 1], &end, 10);
     if (errno || !end || *end || value < 1 || value > INT_MAX) return 2;
-    return take_snapshot((pid_t)value);
+    return watch ? watch_tree((pid_t)value) : take_snapshot((pid_t)value);
 }

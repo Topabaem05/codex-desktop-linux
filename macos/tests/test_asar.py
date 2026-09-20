@@ -29,6 +29,18 @@ class ArchiveTests(unittest.TestCase):
         self.assertEqual(a.header_hash, digest)
         e=a.header['files']['package.json']; self.assertEqual(e['integrity']['hash'],hashlib.sha256(a.read('package.json')).hexdigest())
         a.close()
+    def test_nested_overlays_preserve_payload_and_integrity(self):
+        p,original=self.fixture();out=self.root/'nested.asar'
+        asar.patch(p,out,overlays={'nested/mod.js':b'"use strict";'})
+        a=asar.Archive(out)
+        self.assertEqual(a.read('nested/mod.js'),b'"use strict";')
+        self.assertEqual(out.read_bytes()[a.data_offset:a.data_offset+len(original)],original)
+        self.assertEqual(a.header['files']['nested']['files']['mod.js']['integrity']['hash'],hashlib.sha256(b'"use strict";').hexdigest())
+        a.close()
+    def test_overlay_cannot_override_bootstrap_or_escape_archive(self):
+        p,_=self.fixture()
+        for name in ['../bad.js','/bad.js','package.json','.community-bootstrap.cjs']:
+            with self.assertRaises(ValueError):asar.patch(p,self.root/'bad.asar',overlays={name:b'x'})
     def test_refuses_repeated_patching(self):
         p,_=self.fixture(); out=self.root/'new.asar'; asar.patch(p,out)
         with self.assertRaises(ValueError): asar.patch(out,self.root/'third.asar')
