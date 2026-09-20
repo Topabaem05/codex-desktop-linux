@@ -11,3 +11,7 @@ class EntitlementTests(unittest.TestCase):
         self.assertEqual(set(removed),{'com.apple.security.application-groups','com.apple.developer.team-identifier','keychain-access-groups'})
         self.assertIn('keychain-access-groups',original)
         with self.assertRaises(ValueError):m.development_entitlements({'com.apple.developer.unknown-restricted-capability':True})
+    def test_original_apns_production_claim_is_not_copied(self):
+        clean,removed=m.development_entitlements({'com.apple.developer.aps-environment':'production','com.apple.security.network.client':True})
+        self.assertEqual(clean,{'com.apple.security.network.client':True})
+        self.assertEqual(removed,['com.apple.developer.aps-environment'])

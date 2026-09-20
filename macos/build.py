@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Build a separate, development-signed macOS app and verified DMG.
-
-Only the pinned official input is accepted. This never patches an installed app,
-never disables an integrity fuse, and never changes machine security settings.
-"""
+"""Build an audited, separately staged, development-signed macOS DMG."""
 import argparse
 import copy
 import hashlib
@@ -44,8 +40,7 @@ def community_plist(original, digest):
     result=copy.deepcopy(original)
     result.update(CFBundleExecutable='CodexCommunity',CFBundleName='Codex Community',CFBundleDisplayName='Codex Community')
     result.pop('LSHasLocalizedDisplayName',None)
-    # Native helpers and app-server expect the original bundle identity.
-    # It is NOT an OpenAI signature: the entire copy is re-signed below.
+    # Keep native helper contracts, not the original signing authority.
     result['ElectronAsarIntegrity']['Resources/app.asar']={'algorithm':'SHA256','hash':digest}
     result['CodexCommunityBuild']=True
     result['CodexCommunityProfile']='all-compatible'
@@ -63,7 +58,6 @@ def sign_targets(app):
             if p.is_symlink():continue
             with p.open('rb') as f:magic=f.read(4)
             if magic in MACHO:targets.append(p)
-    # Sign individual code first, then enclosing containers, root last.
     return sorted(set(targets),key=lambda p:(-len(p.parts),str(p)))+[app]
 
 def sha256(path):
@@ -73,8 +67,8 @@ def sha256(path):
     return h.hexdigest()
 
 def development_entitlements(original):
-    # Drop team-owned access rather than copying another developer's authority.
-    restricted={'com.apple.application-identifier','application-identifier','com.apple.developer.team-identifier','keychain-access-groups','com.apple.security.application-groups'}
+    # Explicitly audited in Actions 35480154223. No original APNs/group authority.
+    restricted={'com.apple.application-identifier','application-identifier','com.apple.developer.team-identifier','keychain-access-groups','com.apple.security.application-groups','com.apple.developer.aps-environment'}
     cleaned={k:v for k,v in original.items() if k not in restricted}
     if any(k.startswith('com.apple.developer.') for k in cleaned):
         raise ValueError('Unknown restricted entitlement requires an explicit port review')
@@ -82,24 +76,20 @@ def development_entitlements(original):
 
 def entitlements(path):
     p=subprocess.run(['codesign','-d','--entitlements',':-',str(path)],capture_output=True)
-    raw=p.stdout
-    start=raw.find(b'<?xml')
+    start=p.stdout.find(b'<?xml')
     if start>=0:
-        result=plistlib.loads(raw[start:])
-        cleaned, removed=development_entitlements(result)
+        cleaned,removed=development_entitlements(plistlib.loads(p.stdout[start:]))
         if removed:print('Development signing drops team-bound access:',str(path),','.join(removed),flush=True)
         return cleaned
     return {}
 
 def sign_copy(app, root_ent, scratch):
     targets=sign_targets(app)
-    # Read all metadata BEFORE signing any nested code.
     metadata={p:entitlements(p) for p in targets if p!=app}
     metadata[app]=root_ent
     for i,p in enumerate(targets):
         args=['codesign','--force','--sign','-','--timestamp=none','--options','runtime']
-        e=metadata[p]
-        if p.name=='CodexCommunity':e=root_ent
+        e=root_ent if p.name=='CodexCommunity' else metadata[p]
         if e:
             ef=scratch/f'entitlements-{i}.plist';ef.write_bytes(plistlib.dumps(e))
             args+=['--entitlements',ef]
@@ -112,14 +102,11 @@ def build(options):
     profile=json.loads((HERE/'profile.json').read_text())
     if profile['name']!='all-compatible' or not all(v is True for v in profile['features'].values()):
         raise ValueError('Release profile must enable every implemented compatible feature')
-    out=Path(options.output).resolve()
-    out.mkdir(parents=True,exist_ok=True)
-    dmg_name=f"Codex-Community-{pin['version']}-arm64-dev.dmg"
-    final=out/dmg_name
+    out=Path(options.output).resolve();out.mkdir(parents=True,exist_ok=True)
+    dmg_name=f"Codex-Community-{pin['version']}-arm64-dev.dmg";final=out/dmg_name
     if final.exists():raise FileExistsError(f'Refusing to overwrite existing artifact: {final}')
-    # All destructive work stays inside this owned TemporaryDirectory.
     with tempfile.TemporaryDirectory(prefix='codex-community-build-') as tmp:
-        temp=Path(tmp); mount=temp/'mount';mount.mkdir();stage=temp/'image';stage.mkdir()
+        temp=Path(tmp);mount=temp/'mount';mount.mkdir();stage=temp/'image';stage.mkdir()
         dmg=Path(options.upstream_dmg).resolve() if options.upstream_dmg else temp/'upstream.dmg'
         if not options.upstream_dmg:
             run(['curl','--fail','--location','--proto','=https','--proto-redir','=https','--tlsv1.2','--retry','2',pin['url'],'-o',dmg])
@@ -128,8 +115,7 @@ def build(options):
         try:
             apps=[p for p in mount.glob('*.app') if p.is_dir() and not p.is_symlink()]
             if len(apps)!=1:raise ValueError('Expected exactly one upstream app')
-            source=apps[0]
-            run(['codesign','--verify','--deep','--strict',source])
+            source=apps[0];run(['codesign','--verify','--deep','--strict',source])
             details=run(['codesign','-dvvv',source],capture_output=True,text=True).stderr
             if f"TeamIdentifier={pin['teamID']}" not in details:raise ValueError('Unexpected upstream signer')
             old=plistlib.loads((source/'Contents/Info.plist').read_bytes())
@@ -137,15 +123,11 @@ def build(options):
             original_exe=executable_name(old['CFBundleExecutable'])
             arch=run(['lipo','-archs',source/'Contents/MacOS'/original_exe],capture_output=True,text=True).stdout.strip()
             if arch!=pin['architecture']:raise ValueError('Unexpected source executable architecture')
-            root_ent=entitlements(source)
-            app=stage/'Codex Community.app'
-            run(['ditto',source,app])
+            root_ent=entitlements(source);app=stage/'Codex Community.app';run(['ditto',source,app])
         finally:run(['hdiutil','detach',mount])
-        # Import after platform validation; asar.py is also independently testable.
         sys.path.insert(0,str(HERE))
         from asar import Archive, patch
-        archive_path=app/'Contents/Resources/app.asar'
-        archive=Archive(archive_path)
+        archive_path=app/'Contents/Resources/app.asar';archive=Archive(archive_path)
         original_hash=archive.header_hash;archive.close()
         if old.get('ElectronAsarIntegrity',{}).get('Resources/app.asar',{}).get('hash')!=original_hash:
             raise ValueError('Source ASAR header integrity mismatch')
@@ -158,34 +140,26 @@ def build(options):
         for p in (ROOT/'linux-features/low-memory-budget/runtime').glob('*.js'):shutil.copy2(p,budget/'runtime'/p.name)
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-fblocks','-arch','arm64','-mmacosx-version-min=13.0',ROOT/'linux-features/low-memory-budget/native/macos-memory.c','-o',budget/'native/macos-memory'])
         run(['xcrun','clang','-std=c11','-Wall','-Wextra','-Werror','-O2','-arch','arm64','-mmacosx-version-min=13.0',f'-DCOMMUNITY_HEAP_MIB={int(profile["heapMiB"])}',f'-DUPSTREAM_EXECUTABLE="{original_exe}"',HERE/'launcher.c','-o',app/'Contents/MacOS/CodexCommunity'])
-        info=community_plist(old,digest)
-        (app/'Contents/Info.plist').write_bytes(plistlib.dumps(info))
-        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no access to original app groups or keychain groups','hardLimitEnforced':False}
+        (app/'Contents/Info.plist').write_bytes(plistlib.dumps(community_plist(old,digest)))
+        provenance={'upstream':pin,'sourceHeaderSHA256':original_hash,'patchedHeaderSHA256':digest,'profile':profile,'signing':'ad-hoc development; not notarized','teamBoundAccess':'removed; no original app groups, keychain groups or APNs production access','hardLimitEnforced':False}
         (community/'build-info.json').write_text(json.dumps(provenance,indent=2)+'\n')
         sign_copy(app,root_ent,temp)
         plan=run([app/'Contents/MacOS/CodexCommunity','--community-launch-plan'],capture_output=True,text=True)
         if json.loads(plan.stdout)['heapMiB']!=profile['heapMiB']:raise ValueError('Launcher profile mismatch')
-        # Actual app boot is a release gate, not a test of a fabricated Electron fixture.
         run([sys.executable,HERE/'smoke.py',app,out/'smoke.json',out/'smoke.log'])
-        shutil.copy2(HERE/'INSTALL.txt',stage/'INSTALL.txt')
-        (stage/'Applications').symlink_to('/Applications',target_is_directory=True)
-        candidate=temp/dmg_name
-        run(['hdiutil','create','-volname','Codex Community','-srcfolder',stage,'-format','UDZO',candidate])
-        run(['hdiutil','verify',candidate])
-        run(['hdiutil','attach',candidate,'-readonly','-nobrowse','-mountpoint',mount])
+        shutil.copy2(HERE/'INSTALL.txt',stage/'INSTALL.txt');(stage/'Applications').symlink_to('/Applications',target_is_directory=True)
+        candidate=temp/dmg_name;run(['hdiutil','create','-volname','Codex Community','-srcfolder',stage,'-format','UDZO',candidate])
+        run(['hdiutil','verify',candidate]);run(['hdiutil','attach',candidate,'-readonly','-nobrowse','-mountpoint',mount])
         try:
-            installed=mount/app.name
-            run(['codesign','--verify','--deep','--strict',installed])
+            installed=mount/app.name;run(['codesign','--verify','--deep','--strict',installed])
             copied=Archive(installed/'Contents/Resources/app.asar')
             try:
                 if copied.header_hash!=digest:raise ValueError('DMG ASAR differs from tested app')
             finally:copied.close()
         finally:run(['hdiutil','detach',mount])
-        shutil.move(candidate,final)
-        provenance.update(dmg=dmg_name,sha256=sha256(final),bytes=final.stat().st_size)
+        shutil.move(candidate,final);provenance.update(dmg=dmg_name,sha256=sha256(final),bytes=final.stat().st_size)
         (out/'build-info.json').write_text(json.dumps(provenance,indent=2)+'\n')
-        (out/'SHA256SUMS').write_text(provenance['sha256']+'  '+dmg_name+'\n')
-        print(json.dumps(provenance,indent=2))
+        (out/'SHA256SUMS').write_text(provenance['sha256']+'  '+dmg_name+'\n');print(json.dumps(provenance,indent=2))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser(description=__doc__)

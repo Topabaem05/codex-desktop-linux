@@ -1,15 +1,19 @@
 # Development signing and upstream privileges
 
-The first real DMG build (Actions run 35479946728) verified the audited source,
-then deliberately stopped when it found original team-bound entitlements.
+Real source inspection: Actions 35480154223, signed official 26.915.31945.
 
-The development port now **removes** the original application identifier, team
-identifier, app-group and keychain-group claims before re-signing. It does not
-impersonate OpenAI or grant access to those groups. Unknown restricted developer
-capabilities still reject the build and require an explicit port review. Original
-runtime/JIT entitlements are preserved; no new machine-wide exception is added.
+The development port removes the original application/team identifiers,
+app-group and keychain-group claims, and the original APNs production entitlement
+`com.apple.developer.aps-environment`. It does not impersonate OpenAI or gain access
+to any original group. **Remote APNs push is unavailable in the ad-hoc copy.**
+Unknown restricted developer capabilities still reject the build for review.
+The original runtime/JIT settings are retained; no machine-wide exceptions.
 
-This narrows the previous fail-on-any-team-entitlement design: an ad-hoc copy may
-run without protected integration features. Login, shared Keychain/app-group and
-native integrations are not claimed tested or preserved. Keep the official app.
-A valid development build remains unnotarized and is not an official distribution.
+This supersedes the initial fail-on-any-team-entitlement design in the original
+README/spec: a development copy may run without those protected integrations.
+Login, shared Keychain/app groups, computer-use native integration and remote
+notifications are not claimed preserved or tested. Keep the official app as a
+fallback and do not run both together. Ad-hoc signing is not notarization.
+
+Reference: Apple APS Environment (macOS) Entitlement documentation:
+https://developer.apple.com/documentation/bundleresources/entitlements/com.apple.developer.aps-environment
