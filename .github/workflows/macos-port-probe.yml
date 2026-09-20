@@ -9,54 +9,33 @@ permissions:
 jobs:
   inspect:
     runs-on: macos-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-        with:
-          node-version: 22
-      - name: Inspect official signed macOS app
+      - name: Inspect original entitlement contracts
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p reports "$RUNNER_TEMP/probe-mount"
-          curl --fail --location --proto '=https' --tlsv1.2 https://learn.chatgpt.com/docs/app -o "$RUNNER_TEMP/app.html"
-          python3 - "$RUNNER_TEMP/app.html" "$RUNNER_TEMP/url" <<'PY'
-          import re,sys,html,urllib.parse
-          s=html.unescape(open(sys.argv[1]).read())
-          urls=list(dict.fromkeys(re.findall(r'https://persistent\.oaistatic\.com/[^\s\"<>]+?\.dmg',s)))
-          assert urls, 'No official DMG linked in documentation'
-          print(urls)
-          open(sys.argv[2],'w').write(urls[0])
-          PY
-          url=$(cat "$RUNNER_TEMP/url")
-          curl --fail --location --proto '=https' --tlsv1.2 "$url" -o "$RUNNER_TEMP/upstream.dmg"
+          curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 https://persistent.oaistatic.com/codex-app-prod/Codex.dmg -o "$RUNNER_TEMP/upstream.dmg"
           shasum -a 256 "$RUNNER_TEMP/upstream.dmg" | tee reports/upstream-sha.txt
           hdiutil attach "$RUNNER_TEMP/upstream.dmg" -readonly -nobrowse -mountpoint "$RUNNER_TEMP/probe-mount"
           trap 'hdiutil detach "$RUNNER_TEMP/probe-mount" || true' EXIT
           app=$(find "$RUNNER_TEMP/probe-mount" -maxdepth 1 -name '*.app' -type d -print -quit)
-          test -n "$app"
-          codesign --verify --deep --strict --verbose=2 "$app"
-          codesign -dvvv "$app" 2>&1 | tee reports/codesign.txt
-          plutil -p "$app/Contents/Info.plist" | tee reports/info-plist.txt
-          find "$app/Contents" -maxdepth 3 \( -name '*.asar' -o -name '*node*' -o -name '*codex*' \) | tee reports/paths.txt
-          node - "$app/Contents/Resources/app.asar" <<'JS' | tee reports/asar.txt
-          const fs=require('fs'); const p=process.argv[2];
-          if (!fs.existsSync(p)) { console.log('No app.asar'); process.exit(0); }
-          const fd=fs.openSync(p,'r'), first=Buffer.alloc(16);fs.readSync(fd,first,0,16,0);
-          const n=first.readUInt32LE(12);if(n>64*1024*1024)throw Error('oversized');
-          const b=Buffer.alloc(n);fs.readSync(fd,b,0,n,16);const h=JSON.parse(b.toString());
-          const headerSize=first.readUInt32LE(4);
-          const pkg=h.files['package.json'];const v=Buffer.alloc(pkg.size);fs.readSync(fd,v,0,v.length,8+headerSize+Number(pkg.offset));
-          const meta=JSON.parse(v.toString());console.log(JSON.stringify({main:meta.main,type:meta.type,electron:meta.devDependencies?.electron,dependencies:meta.dependencies},null,2));
-          let entry=h;for(const part of meta.main.split('/').filter(x=>x!=='.'))entry=entry.files[part];
-          const src=Buffer.alloc(Math.min(entry.size,4096));fs.readSync(fd,src,0,src.length,8+headerSize+Number(entry.offset));console.log(src.toString());
-          fs.closeSync(fd);
-          JS
-          printf '%s\n' "$url" > reports/download-url.txt
+          codesign --verify --deep --strict "$app"
+          codesign -d --entitlements :- "$app" 2>&1 | tee reports/entitlements.txt
+          python3 - "$app" <<'PY' | tee reports/nested-entitlements.txt
+          import pathlib,subprocess,sys
+          app=pathlib.Path(sys.argv[1])
+          for p in app.rglob('*.app'):
+              if p.is_symlink():continue
+              print('\nBUNDLE',p.relative_to(app))
+              r=subprocess.run(['codesign','-d','--entitlements',':-',str(p)],capture_output=True,text=True)
+              print(r.stdout)
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: macos-port-probe
+          name: macos-port-entitlements
           path: reports/
           retention-days: 7
