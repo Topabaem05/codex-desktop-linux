@@ -13,6 +13,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include "owner-eof.h"
 
 static volatile sig_atomic_t stopping = 0;
 static void stop_signal(int sig) { stopping = sig; }
@@ -81,6 +82,10 @@ int main(int argc, char **argv) {
     close(ready[0]);
     int out = input[1];
     if (nonblock(out)) { kill(-command, SIGKILL); waitpid(command, NULL, 0); close(out); return 125; }
+    struct owner_eof_watch owner_watch;
+    if (owner_eof_open(&owner_watch)) {
+        kill(-command, SIGKILL); waitpid(command, NULL, 0); close(out); return 125;
+    }
     unsigned char buffer[65536]; size_t offset = 0, used = 0;
     int eof = 0, hangup = 0, phase = 0, reservation = 1;
     int64_t deadline = 0, eof_deadline = 0;
@@ -92,6 +97,11 @@ int main(int argc, char **argv) {
             reservation = 0; break;
         }
         int64_t now = millis();
+        if (!phase && !hangup) {
+            int ended = owner_eof_check(&owner_watch);
+            if (ended > 0) { hangup = 1; eof_deadline = now + grace; }
+            else if (ended < 0) stopping = SIGTERM;
+        }
         if (!phase && (stopping || getppid() != owner || (w == 0 && info.si_pid == command))) {
             close_fd(&out); phase = 1; deadline = now + grace;
         }
@@ -130,6 +140,7 @@ int main(int argc, char **argv) {
         }
     }
     close_fd(&out);
+    owner_eof_close(&owner_watch);
     if (!reservation) return 125;
     int status = 0;
     // The group was signaled while its original leader was still reserved.
