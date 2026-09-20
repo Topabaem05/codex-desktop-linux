@@ -30,7 +30,7 @@ static void close_fd(int *fd) { if (*fd >= 0) { close(*fd); *fd = -1; } }
 static int status_code(int status) {
     return WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : 125;
 }
-int main(int argc, char **argv) {
+static int run_guardian(int argc, char **argv) {
     int grace = 1000, start = 1;
     if (argc == 2 && !strcmp(argv[1], "--version")) {
         puts("codex-mcp-guardian 1 (owned process group; no detached-child guarantee)"); return 0;
@@ -153,3 +153,5 @@ int main(int argc, char **argv) {
     }
     return 124; // An uninterruptible kernel wait cannot be guaranteed to exit.
 }
+
+#include "launcher-lifetime.h"
