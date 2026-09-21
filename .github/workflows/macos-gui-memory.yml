@@ -8,13 +8,9 @@ permissions:
   contents: read
   actions: read
 jobs:
-  audit:
-    strategy:
-      fail-fast: false
-      matrix:
-        kind: [stock, probe]
+  recheck:
     runs-on: macos-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
@@ -22,23 +18,27 @@ jobs:
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 22
-      - name: Validate metric accounting
+      - name: Validate metric accounting and incomplete-data guards
         run: |
-          python3 -m unittest discover -s benchmarks/opt3-gui -p test_metrics.py
+          python3 -m unittest discover -s benchmarks/opt3-gui -p 'test_*.py'
           node --test benchmarks/opt3-gui/probe.test.cjs
           node --check benchmarks/opt3-gui/probe-main.cjs
           node --check benchmarks/opt3-gui/probe-preload.cjs
           git diff --check
-      - name: Observe exact shipped binaries or equal diagnostic copies
-        if: matrix.kind != 'stock' || !contains(github.event.head_commit.message, '[probe-only]')
+      - name: Recheck warmed GUI probes without changing product binaries
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 benchmarks/opt3-gui/run.py ${{ matrix.kind }}
-      - name: Publish numeric evidence even if measurements fail
+        run: python3 benchmarks/opt3-gui/recheck.py
+      - name: Preserve open-source diagnostic code
+        if: always()
+        run: |
+          mkdir -p gui-audit-reports
+          git archive HEAD | gzip > gui-audit-reports/source.tar.gz
+      - name: Publish measurements including capability limitations
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
-          name: opt3-gui-${{ matrix.kind }}
-          path: gui-audit-reports/*.json
+          name: opt3-gui-recheck
+          path: gui-audit-reports/
           retention-days: 7
-          if-no-files-found: warn
+          if-no-files-found: error
